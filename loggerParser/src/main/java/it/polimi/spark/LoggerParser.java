@@ -35,13 +35,14 @@ public class LoggerParser {
 		try {
 			reader = new BufferedReader(new FileReader(config.inputFile));
 			String line;
-			Map<String,JsonObject> eventMaps = new HashMap<String, JsonObject>();
+			Map<String, JsonObject> eventMaps = new HashMap<String, JsonObject>();
 			while ((line = reader.readLine()) != null) {
 				JsonElement element = new JsonParser().parse(line);
-				String eventName = element.getAsJsonObject().get("Event").getAsString();
+				String eventName = element.getAsJsonObject().get("Event")
+						.getAsString();
 				eventMaps.put(eventName, element.getAsJsonObject());
 			}
-			for(String s:eventMaps.keySet())
+			for (String s : eventMaps.keySet())
 				logger.info(s);
 		} catch (JsonIOException e) {
 			logger.error("Could not parse the input file", e);

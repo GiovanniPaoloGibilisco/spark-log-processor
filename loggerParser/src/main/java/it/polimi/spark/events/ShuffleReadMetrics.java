@@ -1,55 +1,72 @@
 package it.polimi.spark.events;
 
-public class ShuffleReadMetrics {
-	private int remoteBlocksFetched;
-	private int localBlocksFatched;
+import com.google.gson.JsonObject;
+
+public class ShuffleReadMetrics implements JsonInitializable {
 	private long fetchWaitTime;
-	private long remoteBytesRead;
+	private int localBlocksFetched;
 	private long localBytesRead;
+	private int remoteBlocksFetched;
+	private long remoteBytesRead;
 	private long totalRecordsRead;
-
-	public int getRemoteBlocksFetched() {
-		return remoteBlocksFetched;
-	}
-
-	public void setRemoteBlocksFetched(int remoteBlocksFetched) {
-		this.remoteBlocksFetched = remoteBlocksFetched;
-	}
-
-	public int getLocalBlocksFatched() {
-		return localBlocksFatched;
-	}
-
-	public void setLocalBlocksFatched(int localBlocksFatched) {
-		this.localBlocksFatched = localBlocksFatched;
-	}
 
 	public long getFetchWaitTime() {
 		return fetchWaitTime;
 	}
 
-	public void setFetchWaitTime(long fetchWaitTime) {
-		this.fetchWaitTime = fetchWaitTime;
-	}
-
-	public long getRemoteBytesRead() {
-		return remoteBytesRead;
-	}
-
-	public void setRemoteBytesRead(long remoteBytesRead) {
-		this.remoteBytesRead = remoteBytesRead;
+	public int getLocalBlocksFatched() {
+		return localBlocksFetched;
 	}
 
 	public long getLocalBytesRead() {
 		return localBytesRead;
 	}
 
-	public void setLocalBytesRead(long localBytesRead) {
-		this.localBytesRead = localBytesRead;
+	public int getRemoteBlocksFetched() {
+		return remoteBlocksFetched;
+	}
+
+	public long getRemoteBytesRead() {
+		return remoteBytesRead;
 	}
 
 	public long getTotalRecordsRead() {
 		return totalRecordsRead;
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public ShuffleReadMetrics initialize(JsonObject jsonObject) {
+		if (jsonObject == null)
+			return null;
+		remoteBlocksFetched = jsonObject.get("Remote Blocks Fetched")
+				.getAsInt();
+		localBlocksFetched = jsonObject.get("Local Blocks Fetched").getAsInt();
+		fetchWaitTime = jsonObject.get("Fetch Wait Time").getAsLong();
+		remoteBytesRead = jsonObject.get("Remote Bytes Read").getAsLong();
+		localBytesRead = jsonObject.get("Local Bytes Read").getAsLong();
+		totalRecordsRead = jsonObject.get("Total Records Read").getAsLong();
+		return this;
+	}
+
+	public void setFetchWaitTime(long fetchWaitTime) {
+		this.fetchWaitTime = fetchWaitTime;
+	}
+
+	public void setLocalBlocksFatched(int localBlocksFatched) {
+		this.localBlocksFetched = localBlocksFatched;
+	}
+
+	public void setLocalBytesRead(long localBytesRead) {
+		this.localBytesRead = localBytesRead;
+	}
+
+	public void setRemoteBlocksFetched(int remoteBlocksFetched) {
+		this.remoteBlocksFetched = remoteBlocksFetched;
+	}
+
+	public void setRemoteBytesRead(long remoteBytesRead) {
+		this.remoteBytesRead = remoteBytesRead;
 	}
 
 	public void setTotalRecordsRead(long totalRecordsRead) {

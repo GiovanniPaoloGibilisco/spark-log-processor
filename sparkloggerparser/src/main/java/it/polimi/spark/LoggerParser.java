@@ -3,14 +3,11 @@ package it.polimi.spark;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Arrays;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaSparkContext;
-/*
 import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.SQLContext;
-*/
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,8 +25,8 @@ public class LoggerParser {
 		}
 		SparkConf conf = new SparkConf().setAppName("logger-parser").setMaster("local[1]");
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		sc.parallelize(Arrays.asList(1, 2, 3, 4)).saveAsTextFile(config.outputFile);
-		/*
+		
+		
 		SQLContext sqlContext = new org.apache.spark.sql.SQLContext(sc);
 
 		DataFrame logsframe = sqlContext.jsonFile(config.inputFile);
@@ -70,9 +67,9 @@ public class LoggerParser {
 				+ "		JOIN taskEndInfos AS finish"
 				+ "		ON `start.Task Info.Task ID`=`finish.Task Info.Task ID`");
 		
-		taskDetails.javaRDD().saveAsTextFile(config.outputFile);
+		taskDetails.show();
 		
-		*/
+		
 
 	}
 

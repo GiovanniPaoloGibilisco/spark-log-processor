@@ -4,6 +4,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -23,13 +24,16 @@ import org.slf4j.LoggerFactory;
 public class LoggerParser {
 
 	static final Logger logger = LoggerFactory.getLogger(LoggerParser.class);
+	static Config config;
+	static SQLContext sqlContext;
+	static FileSystem hdfs;
 
 	public static void main(String[] args) throws IOException,
 			URISyntaxException {
 
 		// the configuration of the application (as launched by the user)
 		Config.init(args);
-		Config config = Config.getInstance();
+		config = Config.getInstance();
 		if (!Files.exists(Paths.get(config.inputFile))) {
 			logger.error("Input file does not exist");
 			return;
@@ -39,11 +43,11 @@ public class LoggerParser {
 		SparkConf conf = new SparkConf().setAppName("logger-parser").setMaster(
 				"local[1]");
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		SQLContext sqlContext = new org.apache.spark.sql.SQLContext(sc);
+		sqlContext = new org.apache.spark.sql.SQLContext(sc);
 
 		// the hadoop configuration
 		Configuration hadoopConf = new Configuration();
-		FileSystem hdfs = FileSystem.get(hadoopConf);
+		hdfs = FileSystem.get(hadoopConf);
 		if (hdfs.exists(new Path(config.outputFile)))
 			hdfs.delete(new Path(config.outputFile), true);
 
@@ -54,6 +58,19 @@ public class LoggerParser {
 		// register the main table with all the logs as "events"
 		logsframe.registerTempTable("events");
 
+		retrieveTaskInformation();
+
+		hdfs.close();
+	}
+
+	/**
+	 * Retrieves the information on the Tasks
+	 * 
+	 * @throws IOException
+	 * @throws UnsupportedEncodingException
+	 */
+	private static void retrieveTaskInformation() throws IOException,
+			UnsupportedEncodingException {
 		// register two tables, one for the task start event and the other for
 		// the task end event
 		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%TaskStart'")
@@ -69,6 +86,8 @@ public class LoggerParser {
 						+ "				`start.Task Info.Host` AS host,"
 						+ "				`finish.Task Type` AS type,"
 						+ "				`finish.Task Info.Finish Time` - `start.Task Info.Launch Time` AS executionTime,"
+						+ "				`finish.Task Info.Finish Time`  AS finishTime,"
+						+ "				`start.Task Info.Launch Time` AS startTime,"
 						+ "				`finish.Task Metrics.Executor Run Time` AS executorRunTime,"
 						+ "				`finish.Task Metrics.Executor Deserialize Time` AS executorDeserializerTime,"
 						+ "				`finish.Task Metrics.Result Serialization Time` AS resultSerializationTime,"
@@ -92,30 +111,37 @@ public class LoggerParser {
 						+ "		JOIN taskEndInfos AS finish"
 						+ "		ON `start.Task Info.Task ID`=`finish.Task Info.Task ID`");
 
+		// register the result as a table
+		taskDetails.registerTempTable("tasks");
+		saveListToCSV(taskDetails, "TaskDetails.csv");
+	}
 
-		// collect the results and write them to a file
-		List<Row> taskList = taskDetails.toJavaRDD().collect();
-		logger.info("Found "+taskList.size()+" tasks");
-		OutputStream os = hdfs.create(new Path(config.outputFile,
-				"TaskDetails.csv"));
+	/**
+	 * Saves the table in the specified dataFrame in a CSV file.
+	 * In order to save the whole table into a single the DataFrame is transformed into and RDD and then elements are collected. 
+	 * This might cause performance issue if the table is too long
+	 * @param data
+	 * @param fileName
+	 * @throws IOException
+	 * @throws UnsupportedEncodingException
+	 */
+	private static void saveListToCSV(DataFrame data, String fileName)
+			throws IOException, UnsupportedEncodingException {
+		List<Row> taskList = data.toJavaRDD().collect();
+		OutputStream os = hdfs.create(new Path(config.outputFile, fileName));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
 		// the schema first
-		for (String column : taskDetails.columns())
+		for (String column : data.columns())
 			br.write(column + ",");
 		br.write("\n");
 		// the values later
 		for (Row task : taskList) {
-			for (int i = 0; i < task.size(); i++) 
-				br.write(task.get(i) + ",");			
+			for (int i = 0; i < task.size(); i++)
+				br.write(task.get(i) + ",");
 			br.write("\n");
 		}
 		br.close();
-		
-		
-		
-		
-		hdfs.close();
 	}
 
 }

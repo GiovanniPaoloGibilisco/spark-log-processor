@@ -45,7 +45,7 @@ public class LoggerParser {
 				"local[1]");
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		// sqlContext = new org.apache.spark.sql.SQLContext(sc); To use SparkSQL
-		// dialect instead of Hive	
+		// dialect instead of Hive
 		sqlContext = new HiveContext(sc.sc());
 
 		// the hadoop configuration
@@ -68,7 +68,14 @@ public class LoggerParser {
 		hdfs.close();
 	}
 
-	private static void retrieveStageInformation() {
+	/**
+	 * Retrieves the information for stages
+	 * 
+	 * @throws UnsupportedEncodingException
+	 * @throws IOException
+	 */
+	private static void retrieveStageInformation()
+			throws UnsupportedEncodingException, IOException {
 		// register two tables, one for the Stgae start event and the other for
 		// the Stage end event
 		sqlContext.sql(
@@ -78,20 +85,14 @@ public class LoggerParser {
 				"SELECT * FROM events WHERE Event LIKE '%StageCompleted'")
 				.registerTempTable("stageEndInfos");
 
-		// register a table with RDD information
+		// expand the nested structure of the RDD Info and register as a
+		// temporary table
 		sqlContext
-				.sql("SELECT `stageEndInfos.Stage Info.RDD Info` FROM stageEndInfos")
-				.registerTempTable("RDDInfos");
+				.sql("	SELECT `Stage Info.Stage ID`, RDDInfo"
+						+ "		FROM stageEndInfos LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo")
+				.registerTempTable("rddInfos");
 
-		sqlContext
-				.sql("SELECT `stageEndInfos.Stage Info.RDD Info.RDD ID` FROM stageEndInfos")
-				.show();
-		sqlContext
-				.sql("SELECT `stageEndInfos.Stage Info.RDD Info` FROM stageEndInfos")
-				.printSchema();
-		// sqlContext.sql("SELECT `RDD Info.RDD ID` from RDDInfos").show();;
-
-		// query the two tables for the task details
+		// merge the three tables to get the desired information
 		DataFrame stageDetails = sqlContext
 				.sql("SELECT 	`start.Stage Info.Stage ID` AS id,"
 						+ "		`start.Stage Info.Stage Name` AS name,"
@@ -100,12 +101,26 @@ public class LoggerParser {
 						+ "		`finish.Stage Info.Submission Time` AS submissionTime,"
 						+ "		`finish.Stage Info.Completion Time` AS completionTime,"
 						+ "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
-						+ "		`start.Stage Info.RDD Info` AS rddInfo"
+						+ "		`rddInfo.RDD ID`,"
+						+ "		`rddInfo.Name`,"
+						+ "		`rddInfo.Storage Level.Use Disk`,"
+						+ "		`rddInfo.Storage Level.Use Memory`,"
+						+ "		`rddInfo.Storage Level.Use Tachyon`,"
+						+ "		`rddInfo.Storage Level.Deserialized`,"
+						+ "		`rddInfo.Storage Level.Replication`,"
+						+ "		`rddInfo.Number of Partitions`,"
+						+ "		`rddInfo.Number of Cached Partitions`,"
+						+ "		`rddInfo.Memory Size`,"
+						+ "		`rddInfo.Tachyon Size`,"
+						+ "		`rddInfo.Disk Size`"
 						+ "		FROM stageStartInfos AS start"
 						+ "		JOIN stageEndInfos AS finish"
-						+ "		ON `start.Stage Info.Stage ID`=`finish.Stage Info.Stage ID`");
+						+ "		ON `start.Stage Info.Stage ID`=`finish.Stage Info.Stage ID`"
+						+ "		JOIN rddInfos"
+						+ "		ON `start.Stage Info.Stage ID`=`rddInfos.Stage ID`");
 
-		stageDetails.show();
+		stageDetails.registerTempTable("stages");
+		saveListToCSV(stageDetails, "StageDetails.csv");
 
 	}
 

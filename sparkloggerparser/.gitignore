@@ -1,2 +1,4 @@
 /target/
 .classpath
+/metastore_db/
+/derby.log

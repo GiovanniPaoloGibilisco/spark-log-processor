@@ -18,6 +18,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
+import org.apache.spark.sql.hive.HiveContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +44,9 @@ public class LoggerParser {
 		SparkConf conf = new SparkConf().setAppName("logger-parser").setMaster(
 				"local[1]");
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		sqlContext = new org.apache.spark.sql.SQLContext(sc);
+		// sqlContext = new org.apache.spark.sql.SQLContext(sc); To use SparkSQL
+		// dialect instead of Hive	
+		sqlContext = new HiveContext(sc.sc());
 
 		// the hadoop configuration
 		Configuration hadoopConf = new Configuration();
@@ -60,7 +63,50 @@ public class LoggerParser {
 
 		retrieveTaskInformation();
 
+		retrieveStageInformation();
+
 		hdfs.close();
+	}
+
+	private static void retrieveStageInformation() {
+		// register two tables, one for the Stgae start event and the other for
+		// the Stage end event
+		sqlContext.sql(
+				"SELECT * FROM events WHERE Event LIKE '%StageSubmitted'")
+				.registerTempTable("stageStartInfos");
+		sqlContext.sql(
+				"SELECT * FROM events WHERE Event LIKE '%StageCompleted'")
+				.registerTempTable("stageEndInfos");
+
+		// register a table with RDD information
+		sqlContext
+				.sql("SELECT `stageEndInfos.Stage Info.RDD Info` FROM stageEndInfos")
+				.registerTempTable("RDDInfos");
+
+		sqlContext
+				.sql("SELECT `stageEndInfos.Stage Info.RDD Info.RDD ID` FROM stageEndInfos")
+				.show();
+		sqlContext
+				.sql("SELECT `stageEndInfos.Stage Info.RDD Info` FROM stageEndInfos")
+				.printSchema();
+		// sqlContext.sql("SELECT `RDD Info.RDD ID` from RDDInfos").show();;
+
+		// query the two tables for the task details
+		DataFrame stageDetails = sqlContext
+				.sql("SELECT 	`start.Stage Info.Stage ID` AS id,"
+						+ "		`start.Stage Info.Stage Name` AS name,"
+						+ "		`start.Stage Info.Number of Tasks` AS numberOfTasks,"
+						+ "		`start.Stage Info.Details` AS details,"
+						+ "		`finish.Stage Info.Submission Time` AS submissionTime,"
+						+ "		`finish.Stage Info.Completion Time` AS completionTime,"
+						+ "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
+						+ "		`start.Stage Info.RDD Info` AS rddInfo"
+						+ "		FROM stageStartInfos AS start"
+						+ "		JOIN stageEndInfos AS finish"
+						+ "		ON `start.Stage Info.Stage ID`=`finish.Stage Info.Stage ID`");
+
+		stageDetails.show();
+
 	}
 
 	/**
@@ -110,16 +156,17 @@ public class LoggerParser {
 						+ "		FROM taskStartInfos AS start"
 						+ "		JOIN taskEndInfos AS finish"
 						+ "		ON `start.Task Info.Task ID`=`finish.Task Info.Task ID`");
-
 		// register the result as a table
 		taskDetails.registerTempTable("tasks");
 		saveListToCSV(taskDetails, "TaskDetails.csv");
 	}
 
 	/**
-	 * Saves the table in the specified dataFrame in a CSV file.
-	 * In order to save the whole table into a single the DataFrame is transformed into and RDD and then elements are collected. 
-	 * This might cause performance issue if the table is too long
+	 * Saves the table in the specified dataFrame in a CSV file. In order to
+	 * save the whole table into a single the DataFrame is transformed into and
+	 * RDD and then elements are collected. This might cause performance issue
+	 * if the table is too long
+	 * 
 	 * @param data
 	 * @param fileName
 	 * @throws IOException

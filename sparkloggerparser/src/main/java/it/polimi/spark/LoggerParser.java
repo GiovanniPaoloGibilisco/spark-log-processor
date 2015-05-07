@@ -19,8 +19,13 @@ import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.HiveContext;
+import org.jgraph.graph.DefaultEdge;
+import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
+import org.jgrapht.ext.DOTExporter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import scala.collection.mutable.ArrayBuffer;
 
 public class LoggerParser {
 
@@ -28,6 +33,7 @@ public class LoggerParser {
 	static Config config;
 	static SQLContext sqlContext;
 	static FileSystem hdfs;
+	static final String STAGE_LABEL = "Stage";
 
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
@@ -93,8 +99,6 @@ public class LoggerParser {
 						+ "		FROM stageEndInfos LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo")
 				.registerTempTable("rddInfos");
 
-		
-		
 		// merge the three tables to get the desired information
 		DataFrame stageDetails = sqlContext
 				.sql("SELECT 	`start.Stage Info.Stage ID` AS id,"
@@ -105,7 +109,8 @@ public class LoggerParser {
 						+ "		`finish.Stage Info.Completion Time` AS completionTime,"
 						+ "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
 						+ "		`rddInfo.RDD ID`,"
-						+ "		`rddInfo.Scope`," //TODO: Scope is actually a JSON element, we should treat it differently extracting the info
+						// + "		`rddInfo.Scope` AS RDDScope," //TODO: disabled
+						// until we find a way to correctly parse this
 						+ "		`rddInfo.Name` AS RDDName,"
 						+ "		`rddInfo.Parent IDs` AS RDDParentIDs,"
 						+ "		`rddInfo.Storage Level.Use Disk`,"
@@ -126,6 +131,40 @@ public class LoggerParser {
 
 		stageDetails.registerTempTable("stages");
 		saveListToCSV(stageDetails, "StageDetails.csv");
+
+		printGraph(stageDetails);
+	}
+
+	private static void printGraph(DataFrame stageDetails) throws IOException {
+
+		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
+				DefaultEdge.class);
+		// add all vertexes first
+		for (Row row : stageDetails.select("id").distinct().collectAsList()) {
+			dag.addVertex(STAGE_LABEL + row.getLong(0));
+		}
+
+		// add all edges
+		for (Row row : stageDetails.select("id", "parentIDs").distinct()
+				.collectAsList()) {
+			ArrayBuffer<?> links = (ArrayBuffer<?>) row.get(1);
+			for (Object link : links.mkString(",").split(","))
+				// TODO: improve this....
+				dag.addEdge(STAGE_LABEL + row.getLong(0), STAGE_LABEL + link);
+		}
+
+		// ListenableGraph<String, DefaultEdge> g = new
+		// ListenableDirectedGraph<String, DefaultEdge>(
+		// DefaultEdge.class);
+		// JGraph jgraph = new JGraph(new JGraphModelAdapter<String,
+		// DefaultEdge>(g));
+
+		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>();
+		OutputStream os = hdfs.create(new Path(config.outputFile,
+				"stage-graph.dot"));
+		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
+				"UTF-8"));
+		exporter.export(br, dag);
 
 	}
 
@@ -186,7 +225,8 @@ public class LoggerParser {
 	 * Saves the table in the specified dataFrame in a CSV file. In order to
 	 * save the whole table into a single the DataFrame is transformed into and
 	 * RDD and then elements are collected. This might cause performance issue
-	 * if the table is too long
+	 * if the table is too long If a field contains an array (ArrayBuffer) its
+	 * content is serialized with spaces as delimiters
 	 * 
 	 * @param data
 	 * @param fileName
@@ -195,7 +235,7 @@ public class LoggerParser {
 	 */
 	private static void saveListToCSV(DataFrame data, String fileName)
 			throws IOException, UnsupportedEncodingException {
-		List<Row> taskList = data.toJavaRDD().collect();
+		List<Row> table = data.toJavaRDD().collect();
 		OutputStream os = hdfs.create(new Path(config.outputFile, fileName));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
@@ -204,10 +244,13 @@ public class LoggerParser {
 			br.write(column + ",");
 		br.write("\n");
 		// the values after
-		for (Row task : taskList) {
-			for (int i = 0; i < task.size(); i++)
-				br.write(task.get(i) + ",");
-			//TODO: Check if the value is actually a list and serialize it without using commas
+		for (Row row : table) {
+			for (int i = 0; i < row.size(); i++) {
+				if (row.get(i) instanceof ArrayBuffer<?>)
+					br.write(((ArrayBuffer<?>) row.get(i)).mkString(" ") + ',');
+				else
+					br.write(row.get(i) + ",");
+			}
 			br.write("\n");
 		}
 		br.close();

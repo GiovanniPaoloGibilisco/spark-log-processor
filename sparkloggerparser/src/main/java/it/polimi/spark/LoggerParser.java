@@ -101,12 +101,11 @@ public class LoggerParser {
 						+ "		`start.Stage Info.Parent IDs` AS parentIDs,"
 						+ "		`start.Stage Info.Stage Name` AS name,"
 						+ "		`start.Stage Info.Number of Tasks` AS numberOfTasks,"
-						+ "		`start.Stage Info.Details` AS details,"
 						+ "		`finish.Stage Info.Submission Time` AS submissionTime,"
 						+ "		`finish.Stage Info.Completion Time` AS completionTime,"
 						+ "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
 						+ "		`rddInfo.RDD ID`,"
-						+ "		`rddInfo.Scope`,"
+						+ "		`rddInfo.Scope`," //TODO: Scope is actually a JSON element, we should treat it differently extracting the info
 						+ "		`rddInfo.Name` AS RDDName,"
 						+ "		`rddInfo.Parent IDs` AS RDDParentIDs,"
 						+ "		`rddInfo.Storage Level.Use Disk`,"
@@ -204,10 +203,11 @@ public class LoggerParser {
 		for (String column : data.columns())
 			br.write(column + ",");
 		br.write("\n");
-		// the values later
+		// the values after
 		for (Row task : taskList) {
 			for (int i = 0; i < task.size(); i++)
 				br.write(task.get(i) + ",");
+			//TODO: Check if the value is actually a list and serialize it without using commas
 			br.write("\n");
 		}
 		br.close();

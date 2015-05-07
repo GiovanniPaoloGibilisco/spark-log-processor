@@ -30,7 +30,7 @@ public class LoggerParser {
 	static FileSystem hdfs;
 
 	public static void main(String[] args) throws IOException,
-			URISyntaxException {
+			URISyntaxException, ClassNotFoundException {
 
 		// the configuration of the application (as launched by the user)
 		Config.init(args);
@@ -66,6 +66,7 @@ public class LoggerParser {
 		retrieveStageInformation();
 
 		hdfs.close();
+		sc.close();
 	}
 
 	/**
@@ -92,9 +93,12 @@ public class LoggerParser {
 						+ "		FROM stageEndInfos LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo")
 				.registerTempTable("rddInfos");
 
+		
+		
 		// merge the three tables to get the desired information
 		DataFrame stageDetails = sqlContext
 				.sql("SELECT 	`start.Stage Info.Stage ID` AS id,"
+						+ "		`start.Stage Info.Parent IDs` AS parentIDs,"
 						+ "		`start.Stage Info.Stage Name` AS name,"
 						+ "		`start.Stage Info.Number of Tasks` AS numberOfTasks,"
 						+ "		`start.Stage Info.Details` AS details,"
@@ -102,16 +106,18 @@ public class LoggerParser {
 						+ "		`finish.Stage Info.Completion Time` AS completionTime,"
 						+ "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
 						+ "		`rddInfo.RDD ID`,"
-						+ "		`rddInfo.Name`,"
+						+ "		`rddInfo.Scope`,"
+						+ "		`rddInfo.Name` AS RDDName,"
+						+ "		`rddInfo.Parent IDs` AS RDDParentIDs,"
 						+ "		`rddInfo.Storage Level.Use Disk`,"
 						+ "		`rddInfo.Storage Level.Use Memory`,"
-						+ "		`rddInfo.Storage Level.Use Tachyon`,"
+						+ "		`rddInfo.Storage Level.Use ExternalBlockStore`,"
 						+ "		`rddInfo.Storage Level.Deserialized`,"
 						+ "		`rddInfo.Storage Level.Replication`,"
 						+ "		`rddInfo.Number of Partitions`,"
 						+ "		`rddInfo.Number of Cached Partitions`,"
 						+ "		`rddInfo.Memory Size`,"
-						+ "		`rddInfo.Tachyon Size`,"
+						+ "		`rddInfo.ExternalBlockStore Size`,"
 						+ "		`rddInfo.Disk Size`"
 						+ "		FROM stageStartInfos AS start"
 						+ "		JOIN stageEndInfos AS finish"
@@ -148,6 +154,7 @@ public class LoggerParser {
 						+ "				`finish.Task Type` AS type,"
 						+ "				`finish.Task Info.Finish Time` - `start.Task Info.Launch Time` AS executionTime,"
 						+ "				`finish.Task Info.Finish Time`  AS finishTime,"
+						+ "				`finish.Task Info.Getting Result Time`  AS gettingResultTime,"
 						+ "				`start.Task Info.Launch Time` AS startTime,"
 						+ "				`finish.Task Metrics.Executor Run Time` AS executorRunTime,"
 						+ "				`finish.Task Metrics.Executor Deserialize Time` AS executorDeserializerTime,"

@@ -8,7 +8,10 @@ import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map.Entry;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -23,10 +26,16 @@ import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
 import org.jgrapht.ext.DOTExporter;
 import org.jgrapht.ext.StringNameProvider;
+import org.jgrapht.ext.VertexNameProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import scala.collection.JavaConversions;
 import scala.collection.mutable.ArrayBuffer;
+
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class LoggerParser {
 
@@ -80,9 +89,12 @@ public class LoggerParser {
 
 		saveListToCSV(stageDetails, "StageDetails.csv");
 
+		List<RDD> rdds = extractRDDs(stageDetails);
+		
 		// save the graph dot files for visualization
 		printStageGraph(stageDetails);
-		printRDDGraph(stageDetails);
+		//printRDDGraph(stageDetails);
+		printRDDGraph(rdds);
 
 		// clean up the mess
 		hdfs.close();
@@ -90,8 +102,92 @@ public class LoggerParser {
 	}
 
 	/**
+	 * Extracts a list of RDDs from the table
+	 * 
+	 * @param stageDetails
+	 * @return list of RDDs
+	 */
+	private static List<RDD> extractRDDs(DataFrame stageDetails) {
+		List<RDD> rdds = new ArrayList<RDD>();
+		for (Row row : stageDetails.select("RDD ID", "RDDParentIDs", "RDDName",
+				"RDDScope", "Number of Partitions").collectAsList()) {
+			ArrayBuffer<Long> parentIds = (ArrayBuffer<Long>) row.get(1);
+			List<Long> parentList = JavaConversions.asJavaList(parentIds);
+
+			long scopeID = 0;
+			String scopeName = null;
+			if (!row.getString(3).isEmpty() && row.getString(3).startsWith("{")) {
+				JsonObject scopeObject = new JsonParser().parse(
+						row.getString(3)).getAsJsonObject();
+				scopeID = scopeObject.get("id").getAsLong();
+				scopeName = scopeObject.get("name").getAsString();
+			}
+
+			rdds.add(new RDD(row.getLong(0), parentList, row.getString(2),
+					scopeID, scopeName, row.getLong(4)));
+
+		}
+		return rdds;
+	}
+
+	/**
 	 * builds the graph with RDD dependencies and saves it into a .dot file that
-	 * can be used for visualization
+	 * can be used for visualization, starting from a list of RDDs,
+	 * Thisinformation include RDD ID, and names
+	 * 
+	 * @param rdds
+	 * @throws IOException
+	 */
+	private static void printRDDGraph(List<RDD> rdds) throws IOException {
+
+		DirectedAcyclicGraph<RDD, DefaultEdge> dag = new DirectedAcyclicGraph<RDD, DefaultEdge>(
+				DefaultEdge.class);
+
+		// build an hashmap to look for rdds quickly
+		HashMap<Long, RDD> rddMap = new HashMap<Long, RDD>(rdds.size());
+		for (RDD rdd : rdds)
+			rddMap.put(rdd.getId(), rdd);
+
+		// add all vertexes first
+		for (RDD rdd : rdds) {
+			dag.addVertex(rdd);
+			logger.info("Added RDD" + rdd.getId() + " to the graph");
+		}
+
+		// add all edges then
+		for (RDD rdd : rdds) {
+			for (Long source : rdd.getParentIDs()) {
+				dag.addEdge(rddMap.get(source), rdd);
+				logger.info("Added link from RDD " + source + "to RDD"
+						+ rdd.getId());
+			}
+		}
+
+		DOTExporter<RDD, DefaultEdge> exporter = new DOTExporter<RDD, DefaultEdge>(
+				new VertexNameProvider<RDD>() {
+
+					public String getVertexName(RDD rdd) {
+						return RDD_LABEL + rdd.getId();
+					}
+				}, new VertexNameProvider<RDD>() {
+
+					public String getVertexName(RDD rdd) {
+						return rdd.getName()+" ("+rdd.getId()+")";
+					}
+				}, null);
+
+		OutputStream os = hdfs.create(new Path(config.outputFile,
+				"rdd-graph.dot"));
+		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
+				"UTF-8"));
+		exporter.export(br, dag);
+		br.close();
+	}
+
+	/**
+	 * builds the graph with RDD dependencies and saves it into a .dot file that
+	 * can be used for visualization, starting from the stageDetails. this
+	 * visualization includes only RDD IDs
 	 * 
 	 * @param stageDetails
 	 * @throws IOException
@@ -109,13 +205,13 @@ public class LoggerParser {
 		// add all edges
 		for (Row row : stageDetails.select("RDD ID", "RDDParentIDs")
 				.collectAsList()) {
-			ArrayBuffer<?> sources = (ArrayBuffer<?>) row.get(1);
-			for (String source : sources.mkString(",").split(","))
-				if (source != null && !source.isEmpty()) {
-					dag.addEdge(RDD_LABEL + source, RDD_LABEL + row.getLong(0));
-					logger.info("Added link from " + RDD_LABEL + source + "to "
-							+ RDD_LABEL + row.getLong(0));
-				}
+			List<Long> sources = JavaConversions
+					.asJavaList((ArrayBuffer<Long>) row.get(1));
+			for (Long source : sources) {
+				dag.addEdge(RDD_LABEL + source, RDD_LABEL + row.getLong(0));
+				logger.info("Added link from " + RDD_LABEL + source + "to "
+						+ RDD_LABEL + row.getLong(0));
+			}
 		}
 
 		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
@@ -151,14 +247,13 @@ public class LoggerParser {
 		// add all edges
 		for (Row row : stageDetails.select("id", "parentIDs").distinct()
 				.collectAsList()) {
-			ArrayBuffer<?> sources = (ArrayBuffer<?>) row.get(1);
-			for (String source : sources.mkString(",").split(","))
-				if (source != null && !source.isEmpty()) {
-					dag.addEdge(STAGE_LABEL + source,
-							STAGE_LABEL + row.getLong(0));
-					logger.info("Added link from " + STAGE_LABEL + source
-							+ "to " + STAGE_LABEL + row.getLong(0));
-				}
+			List<Long> sources = JavaConversions
+					.asJavaList((ArrayBuffer<Long>) row.get(1));
+			for (Long source : sources) {
+				dag.addEdge(STAGE_LABEL + source, STAGE_LABEL + row.getLong(0));
+				logger.info("Added link from " + STAGE_LABEL + source + "to "
+						+ STAGE_LABEL + row.getLong(0));
+			}
 		}
 
 		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
@@ -206,8 +301,7 @@ public class LoggerParser {
 						+ "		`finish.Stage Info.Completion Time` AS completionTime,"
 						+ "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
 						+ "		`rddInfo.RDD ID`,"
-						// + "		`rddInfo.Scope` AS RDDScope," //TODO: disabled
-						// until we find a way to correctly parse this
+						+ "		`rddInfo.Scope` AS RDDScope,"
 						+ "		`rddInfo.Name` AS RDDName,"
 						+ "		`rddInfo.Parent IDs` AS RDDParentIDs,"
 						+ "		`rddInfo.Storage Level.Use Disk`,"
@@ -312,7 +406,16 @@ public class LoggerParser {
 		// the values after
 		for (Row row : table) {
 			for (int i = 0; i < row.size(); i++) {
-				if (row.get(i) instanceof ArrayBuffer<?>)
+				if (row.get(i) instanceof String
+						&& row.getString(i).startsWith("{")) {
+					JsonParser parser = new JsonParser();
+					JsonObject jsonObject = parser.parse(row.getString(i))
+							.getAsJsonObject();
+					for (Entry<String, JsonElement> element : jsonObject
+							.entrySet())
+						br.write(element.getValue().getAsString() + " ");
+					br.write(",");
+				} else if (row.get(i) instanceof ArrayBuffer<?>)
 					br.write(((ArrayBuffer<?>) row.get(i)).mkString(" ") + ',');
 				else
 					br.write(row.get(i) + ",");

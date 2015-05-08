@@ -52,11 +52,30 @@ public class LoggerParser {
 		// the configuration of the application (as launched by the user)
 		Config.init(args);
 		config = Config.getInstance();
-		if (!Files.exists(Paths.get(config.inputFile))) {
+		// either -i or -a has to be specified
+		if (config.inputFile == null || config.applicationID == null) {
+			logger.error("No input file (-i option) or application id (-a option) has been specified. At least one of these options has to be provided");
+			return;
+		}
+
+		// exactly one otherwise we will not know where the user wants to get
+		// the logs from
+		if (config.inputFile != null && config.applicationID != null) {
+			logger.error("Either the input file (-i option) or the application id (-a option) has to be specified.");
+			return;
+		}
+
+		//if -i has been specified but the file does not exist
+		//TODO: (check that this works also on hdfs file system)
+		if (config.inputFile != null
+				&& !Files.exists(Paths.get(config.inputFile))) {
 			logger.error("Input file does not exist");
 			return;
 		}
 
+		
+		//TODO: if the -a option has been specified, then get the default logging directory from sparkconf (property spark.eventLog.dir) and use it as base folder to look for the application log
+		
 		// the spark configuration
 		SparkConf conf = new SparkConf().setAppName("logger-parser");
 		if (config.runLocal)
@@ -90,10 +109,10 @@ public class LoggerParser {
 		saveListToCSV(stageDetails, "StageDetails.csv");
 
 		List<RDD> rdds = extractRDDs(stageDetails);
-		
+
 		// save the graph dot files for visualization
 		printStageGraph(stageDetails);
-		//printRDDGraph(stageDetails);
+		// printRDDGraph(stageDetails);
 		printRDDGraph(rdds);
 
 		// clean up the mess
@@ -172,7 +191,7 @@ public class LoggerParser {
 				}, new VertexNameProvider<RDD>() {
 
 					public String getVertexName(RDD rdd) {
-						return rdd.getName()+" ("+rdd.getId()+")";
+						return rdd.getName() + " (" + rdd.getId() + ")";
 					}
 				}, null);
 

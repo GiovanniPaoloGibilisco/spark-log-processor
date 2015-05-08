@@ -10,8 +10,8 @@ Note that the spark event log directory can also be on another file system like 
 In order to build the DAG from from the logs the latest development versionof Spark (1.4.0.snaphot) should be used.
 
 The tool accepts 3 parameters:
-* the path to the log file (`-i --inputFile`)
-* the path to the output folder (`-o --outputFile`)
+* the path to the log file `-i --inputFile`
+* the path to the output folder `-o --outputFile`
 * the optional flag `-l` can be used to run the tool in a local instance of spark istead of using a cluster
 
 Once built has been built can be invoked by using spark-submit script

@@ -22,6 +22,7 @@ import org.apache.spark.sql.hive.HiveContext;
 import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
 import org.jgrapht.ext.DOTExporter;
+import org.jgrapht.ext.StringNameProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,7 +34,7 @@ public class LoggerParser {
 	static Config config;
 	static SQLContext sqlContext;
 	static FileSystem hdfs;
-	static final String STAGE_LABEL = "Stage";
+	static final String STAGE_LABEL = "Stage ";
 
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
@@ -47,8 +48,9 @@ public class LoggerParser {
 		}
 
 		// the spark configuration
-		SparkConf conf = new SparkConf().setAppName("logger-parser").setMaster(
-				"local[1]");
+		SparkConf conf = new SparkConf().setAppName("logger-parser");
+		if (config.runLocal)
+			conf.setMaster("local[1]");
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		// sqlContext = new org.apache.spark.sql.SQLContext(sc); To use SparkSQL
 		// dialect instead of Hive
@@ -67,10 +69,20 @@ public class LoggerParser {
 		// register the main table with all the logs as "events"
 		logsframe.registerTempTable("events");
 
-		retrieveTaskInformation();
+		// query the data
+		DataFrame taskDetails = retrieveTaskInformation();
 
-		retrieveStageInformation();
+		DataFrame stageDetails = retrieveStageInformation();
 
+		// save CSV with performance information
+		saveListToCSV(taskDetails, "TaskDetails.csv");
+
+		saveListToCSV(stageDetails, "StageDetails.csv");
+
+		// save the graph dot files for visualization
+		printStageGraph(stageDetails);
+
+		// clean up the mess
 		hdfs.close();
 		sc.close();
 	}
@@ -81,7 +93,7 @@ public class LoggerParser {
 	 * @throws UnsupportedEncodingException
 	 * @throws IOException
 	 */
-	private static void retrieveStageInformation()
+	private static DataFrame retrieveStageInformation()
 			throws UnsupportedEncodingException, IOException {
 		// register two tables, one for the Stgae start event and the other for
 		// the Stage end event
@@ -130,27 +142,41 @@ public class LoggerParser {
 						+ "		ON `start.Stage Info.Stage ID`=`rddInfos.Stage ID`");
 
 		stageDetails.registerTempTable("stages");
-		saveListToCSV(stageDetails, "StageDetails.csv");
 
-		printGraph(stageDetails);
+		return stageDetails;
+
 	}
 
-	private static void printGraph(DataFrame stageDetails) throws IOException {
+	/**
+	 * builds the graph with stages dependencies and saves it into a .dot file
+	 * that can be used for visualization
+	 * 
+	 * @param stageDetails
+	 * @throws IOException
+	 */
+	private static void printStageGraph(DataFrame stageDetails)
+			throws IOException {
 
 		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
 				DefaultEdge.class);
 		// add all vertexes first
 		for (Row row : stageDetails.select("id").distinct().collectAsList()) {
 			dag.addVertex(STAGE_LABEL + row.getLong(0));
+			logger.info("Added " + STAGE_LABEL + row.getLong(0)
+					+ " to the graph");
 		}
 
 		// add all edges
 		for (Row row : stageDetails.select("id", "parentIDs").distinct()
 				.collectAsList()) {
 			ArrayBuffer<?> links = (ArrayBuffer<?>) row.get(1);
-			for (Object link : links.mkString(",").split(","))
-				// TODO: improve this....
-				dag.addEdge(STAGE_LABEL + row.getLong(0), STAGE_LABEL + link);
+			for (String link : links.mkString(",").split(","))
+				if (link != null && !link.isEmpty()) {
+					dag.addEdge(STAGE_LABEL + link,
+							STAGE_LABEL + row.getLong(0));
+					logger.info("Added link from " + STAGE_LABEL + link + "to "
+							+ STAGE_LABEL + row.getLong(0));
+				}
 		}
 
 		// ListenableGraph<String, DefaultEdge> g = new
@@ -159,22 +185,26 @@ public class LoggerParser {
 		// JGraph jgraph = new JGraph(new JGraphModelAdapter<String,
 		// DefaultEdge>(g));
 
-		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>();
+		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
+				new StringNameProvider<String>(), null, null);
 		OutputStream os = hdfs.create(new Path(config.outputFile,
 				"stage-graph.dot"));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
 		exporter.export(br, dag);
+		br.close();
 
 	}
 
 	/**
 	 * Retrieves the information on the Tasks
 	 * 
+	 * @return
+	 * 
 	 * @throws IOException
 	 * @throws UnsupportedEncodingException
 	 */
-	private static void retrieveTaskInformation() throws IOException,
+	private static DataFrame retrieveTaskInformation() throws IOException,
 			UnsupportedEncodingException {
 		// register two tables, one for the task start event and the other for
 		// the task end event
@@ -218,7 +248,7 @@ public class LoggerParser {
 						+ "		ON `start.Task Info.Task ID`=`finish.Task Info.Task ID`");
 		// register the result as a table
 		taskDetails.registerTempTable("tasks");
-		saveListToCSV(taskDetails, "TaskDetails.csv");
+		return taskDetails;
 	}
 
 	/**

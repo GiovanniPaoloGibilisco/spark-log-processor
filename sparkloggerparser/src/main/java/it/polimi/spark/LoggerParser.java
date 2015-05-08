@@ -30,11 +30,12 @@ import scala.collection.mutable.ArrayBuffer;
 
 public class LoggerParser {
 
-	static final Logger logger = LoggerFactory.getLogger(LoggerParser.class);
 	static Config config;
-	static SQLContext sqlContext;
 	static FileSystem hdfs;
-	static final String STAGE_LABEL = "Stage ";
+	static final Logger logger = LoggerFactory.getLogger(LoggerParser.class);
+	static SQLContext sqlContext;
+	static final String STAGE_LABEL = "Stage_";
+	static final String RDD_LABEL = "RDD_";
 
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
@@ -81,10 +82,94 @@ public class LoggerParser {
 
 		// save the graph dot files for visualization
 		printStageGraph(stageDetails);
+		printRDDGraph(stageDetails);
 
 		// clean up the mess
 		hdfs.close();
 		sc.close();
+	}
+
+	/**
+	 * builds the graph with RDD dependencies and saves it into a .dot file that
+	 * can be used for visualization
+	 * 
+	 * @param stageDetails
+	 * @throws IOException
+	 */
+	private static void printRDDGraph(DataFrame stageDetails)
+			throws IOException {
+		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
+				DefaultEdge.class);
+		// add all vertexes first
+		for (Row row : stageDetails.select("RDD ID").distinct().collectAsList()) {
+			dag.addVertex(RDD_LABEL + row.getLong(0));
+			logger.info("Added " + RDD_LABEL + row.getLong(0) + " to the graph");
+		}
+
+		// add all edges
+		for (Row row : stageDetails.select("RDD ID", "RDDParentIDs")
+				.collectAsList()) {
+			ArrayBuffer<?> sources = (ArrayBuffer<?>) row.get(1);
+			for (String source : sources.mkString(",").split(","))
+				if (source != null && !source.isEmpty()) {
+					dag.addEdge(RDD_LABEL + source, RDD_LABEL + row.getLong(0));
+					logger.info("Added link from " + RDD_LABEL + source + "to "
+							+ RDD_LABEL + row.getLong(0));
+				}
+		}
+
+		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
+				new StringNameProvider<String>(), null, null);
+		OutputStream os = hdfs.create(new Path(config.outputFile,
+				"rdd-graph.dot"));
+		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
+				"UTF-8"));
+		exporter.export(br, dag);
+		br.close();
+
+	}
+
+	/**
+	 * builds the graph with stages dependencies and saves it into a .dot file
+	 * that can be used for visualization
+	 * 
+	 * @param stageDetails
+	 * @throws IOException
+	 */
+	private static void printStageGraph(DataFrame stageDetails)
+			throws IOException {
+
+		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
+				DefaultEdge.class);
+		// add all vertexes first
+		for (Row row : stageDetails.select("id").distinct().collectAsList()) {
+			dag.addVertex(STAGE_LABEL + row.getLong(0));
+			logger.info("Added " + STAGE_LABEL + row.getLong(0)
+					+ " to the graph");
+		}
+
+		// add all edges
+		for (Row row : stageDetails.select("id", "parentIDs").distinct()
+				.collectAsList()) {
+			ArrayBuffer<?> sources = (ArrayBuffer<?>) row.get(1);
+			for (String source : sources.mkString(",").split(","))
+				if (source != null && !source.isEmpty()) {
+					dag.addEdge(STAGE_LABEL + source,
+							STAGE_LABEL + row.getLong(0));
+					logger.info("Added link from " + STAGE_LABEL + source
+							+ "to " + STAGE_LABEL + row.getLong(0));
+				}
+		}
+
+		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
+				new StringNameProvider<String>(), null, null);
+		OutputStream os = hdfs.create(new Path(config.outputFile,
+				"stage-graph.dot"));
+		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
+				"UTF-8"));
+		exporter.export(br, dag);
+		br.close();
+
 	}
 
 	/**
@@ -144,55 +229,6 @@ public class LoggerParser {
 		stageDetails.registerTempTable("stages");
 
 		return stageDetails;
-
-	}
-
-	/**
-	 * builds the graph with stages dependencies and saves it into a .dot file
-	 * that can be used for visualization
-	 * 
-	 * @param stageDetails
-	 * @throws IOException
-	 */
-	private static void printStageGraph(DataFrame stageDetails)
-			throws IOException {
-
-		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
-				DefaultEdge.class);
-		// add all vertexes first
-		for (Row row : stageDetails.select("id").distinct().collectAsList()) {
-			dag.addVertex(STAGE_LABEL + row.getLong(0));
-			logger.info("Added " + STAGE_LABEL + row.getLong(0)
-					+ " to the graph");
-		}
-
-		// add all edges
-		for (Row row : stageDetails.select("id", "parentIDs").distinct()
-				.collectAsList()) {
-			ArrayBuffer<?> links = (ArrayBuffer<?>) row.get(1);
-			for (String link : links.mkString(",").split(","))
-				if (link != null && !link.isEmpty()) {
-					dag.addEdge(STAGE_LABEL + link,
-							STAGE_LABEL + row.getLong(0));
-					logger.info("Added link from " + STAGE_LABEL + link + "to "
-							+ STAGE_LABEL + row.getLong(0));
-				}
-		}
-
-		// ListenableGraph<String, DefaultEdge> g = new
-		// ListenableDirectedGraph<String, DefaultEdge>(
-		// DefaultEdge.class);
-		// JGraph jgraph = new JGraph(new JGraphModelAdapter<String,
-		// DefaultEdge>(g));
-
-		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
-				new StringNameProvider<String>(), null, null);
-		OutputStream os = hdfs.create(new Path(config.outputFile,
-				"stage-graph.dot"));
-		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
-				"UTF-8"));
-		exporter.export(br, dag);
-		br.close();
 
 	}
 

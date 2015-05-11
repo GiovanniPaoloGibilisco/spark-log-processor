@@ -32,9 +32,10 @@ public class Config implements Serializable {
 	public static void init(String[] args) {
 		_instance = new Config();
 		new JCommander(_instance, args);
-		logger.debug(
-				"Configuration: --inputFile {} --outputFile {} --runlocal {} --appID",
-				new Object[] { _instance.inputFile, _instance.outputFile, _instance.runLocal, _instance.applicationID});
+		logger.info(
+				"Configuration: --inputFile {} --outputFile {} --runlocal {} --appID {}",
+				new Object[] { _instance.inputFile, _instance.outputFile,
+						_instance.runLocal, _instance.applicationID });
 	}
 
 	@Parameter(names = { "-i", "--inputFile" })
@@ -42,10 +43,10 @@ public class Config implements Serializable {
 
 	@Parameter(names = { "-o", "--outputFile" }, required = true)
 	public String outputFile;
-	
+
 	@Parameter(names = { "-l", "--runLocal" })
 	public boolean runLocal = false;
-	
+
 	@Parameter(names = { "-a", "--appID" })
 	public String applicationID;
 

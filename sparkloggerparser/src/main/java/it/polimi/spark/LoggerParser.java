@@ -6,8 +6,6 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -31,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import scala.collection.JavaConversions;
+import scala.collection.Seq;
 import scala.collection.mutable.ArrayBuffer;
 
 import com.google.gson.JsonElement;
@@ -49,45 +48,59 @@ public class LoggerParser {
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
 
+		// the hadoop configuration
+		Configuration hadoopConf = new Configuration();
+		hdfs = FileSystem.get(hadoopConf);
+
+		// the spark configuration
+		SparkConf conf = new SparkConf().setAppName("logger-parser");
 		// the configuration of the application (as launched by the user)
 		Config.init(args);
 		config = Config.getInstance();
+
+		if (config.runLocal)
+			conf.setMaster("local[1]");
+
 		// either -i or -a has to be specified
-		if (config.inputFile == null || config.applicationID == null) {
-			logger.error("No input file (-i option) or application id (-a option) has been specified. At least one of these options has to be provided");
+		if (config.inputFile == null && config.applicationID == null) {
+			logger.info("No input file (-i option) or application id (-a option) has been specified. At least one of these options has to be provided");
 			return;
 		}
 
 		// exactly one otherwise we will not know where the user wants to get
 		// the logs from
 		if (config.inputFile != null && config.applicationID != null) {
-			logger.error("Either the input file (-i option) or the application id (-a option) has to be specified.");
+			logger.info("Either the input file (-i option) or the application id (-a option) has to be specified.");
 			return;
 		}
 
-		//if -i has been specified but the file does not exist
-		//TODO: (check that this works also on hdfs file system)
+		// if the -a option has been specified, then get the default
+		// logging directory from sparkconf (property spark.eventLog.dir) and
+		// use it as base folder to look for the application log
+		if (config.applicationID != null) {
+			String eventLogDir = conf.get("spark.eventLog.dir", null).replace(
+					"file://", "");
+			if (eventLogDir == null) {
+				logger.info("Could not retireve the logging directory from the spark configuration, the property spark.eventLog.dir has to be set");
+				return;
+			}
+			config.inputFile = eventLogDir + "/" + config.applicationID;
+		}
+
+		logger.info("Reding logs from: " + config.inputFile);
+	 
+		//if the file does not exist
 		if (config.inputFile != null
-				&& !Files.exists(Paths.get(config.inputFile))) {
-			logger.error("Input file does not exist");
+				&& !hdfs.exists(new Path(config.inputFile))) {
+			logger.info("Input file " + config.inputFile + " does not exist");
 			return;
 		}
 
-		
-		//TODO: if the -a option has been specified, then get the default logging directory from sparkconf (property spark.eventLog.dir) and use it as base folder to look for the application log
-		
-		// the spark configuration
-		SparkConf conf = new SparkConf().setAppName("logger-parser");
-		if (config.runLocal)
-			conf.setMaster("local[1]");
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		// sqlContext = new org.apache.spark.sql.SQLContext(sc); To use SparkSQL
 		// dialect instead of Hive
 		sqlContext = new HiveContext(sc.sc());
 
-		// the hadoop configuration
-		Configuration hadoopConf = new Configuration();
-		hdfs = FileSystem.get(hadoopConf);
 		if (hdfs.exists(new Path(config.outputFile)))
 			hdfs.delete(new Path(config.outputFile), true);
 
@@ -130,8 +143,17 @@ public class LoggerParser {
 		List<RDD> rdds = new ArrayList<RDD>();
 		for (Row row : stageDetails.select("RDD ID", "RDDParentIDs", "RDDName",
 				"RDDScope", "Number of Partitions").collectAsList()) {
-			ArrayBuffer<Long> parentIds = (ArrayBuffer<Long>) row.get(1);
-			List<Long> parentList = JavaConversions.asJavaList(parentIds);
+			List<Long> parentList = null;
+			if (row.get(1) instanceof scala.collection.immutable.List<?>)
+				parentList = JavaConversions.asJavaList((Seq<Long>) row.get(1));
+			else if (row.get(1) instanceof ArrayBuffer<?>)
+				parentList = JavaConversions.asJavaList((ArrayBuffer<Long>) row
+						.get(1));
+			else {
+				logger.warn("Could not parse RDD PArent IDs Serialization:"
+						+ row.get(1).toString() + " class: "
+						+ row.get(1).getClass() + " Object: " + row.get(1));
+			}
 
 			long scopeID = 0;
 			String scopeName = null;
@@ -175,11 +197,12 @@ public class LoggerParser {
 
 		// add all edges then
 		for (RDD rdd : rdds) {
-			for (Long source : rdd.getParentIDs()) {
-				dag.addEdge(rddMap.get(source), rdd);
-				logger.info("Added link from RDD " + source + "to RDD"
-						+ rdd.getId());
-			}
+			if (rdd.getParentIDs() != null)
+				for (Long source : rdd.getParentIDs()) {
+					dag.addEdge(rddMap.get(source), rdd);
+					logger.info("Added link from RDD " + source + "to RDD"
+							+ rdd.getId());
+				}
 		}
 
 		DOTExporter<RDD, DefaultEdge> exporter = new DOTExporter<RDD, DefaultEdge>(
@@ -224,13 +247,23 @@ public class LoggerParser {
 		// add all edges
 		for (Row row : stageDetails.select("RDD ID", "RDDParentIDs")
 				.collectAsList()) {
-			List<Long> sources = JavaConversions
-					.asJavaList((ArrayBuffer<Long>) row.get(1));
-			for (Long source : sources) {
-				dag.addEdge(RDD_LABEL + source, RDD_LABEL + row.getLong(0));
-				logger.info("Added link from " + RDD_LABEL + source + "to "
-						+ RDD_LABEL + row.getLong(0));
+			List<Long> sources = null;
+			if (row.get(1) instanceof scala.collection.immutable.List<?>)
+				sources = JavaConversions.asJavaList((Seq<Long>) row.get(1));
+			else if (row.get(1) instanceof ArrayBuffer<?>)
+				sources = JavaConversions.asJavaList((ArrayBuffer<Long>) row
+						.get(1));
+			else {
+				logger.warn("Could not parse RDD PArent IDs Serialization:"
+						+ row.get(1).toString() + " class: "
+						+ row.get(1).getClass() + " Object: " + row.get(1));
 			}
+			if (sources != null)
+				for (Long source : sources) {
+					dag.addEdge(RDD_LABEL + source, RDD_LABEL + row.getLong(0));
+					logger.info("Added link from " + RDD_LABEL + source + "to "
+							+ RDD_LABEL + row.getLong(0));
+				}
 		}
 
 		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
@@ -266,13 +299,25 @@ public class LoggerParser {
 		// add all edges
 		for (Row row : stageDetails.select("id", "parentIDs").distinct()
 				.collectAsList()) {
-			List<Long> sources = JavaConversions
-					.asJavaList((ArrayBuffer<Long>) row.get(1));
-			for (Long source : sources) {
-				dag.addEdge(STAGE_LABEL + source, STAGE_LABEL + row.getLong(0));
-				logger.info("Added link from " + STAGE_LABEL + source + "to "
-						+ STAGE_LABEL + row.getLong(0));
+			List<Long> sources = null;
+			if (row.get(1) instanceof scala.collection.immutable.List<?>)
+				sources = JavaConversions.asJavaList((Seq<Long>) row.get(1));
+			else if (row.get(1) instanceof ArrayBuffer<?>)
+				sources = JavaConversions.asJavaList((ArrayBuffer<Long>) row
+						.get(1));
+			else {
+				logger.warn("Could not parse Stage Parent IDs Serialization:"
+						+ row.get(1).toString() + " class: "
+						+ row.get(1).getClass() + " Object: " + row.get(1));
 			}
+
+			if (sources != null)
+				for (Long source : sources) {
+					dag.addEdge(STAGE_LABEL + source,
+							STAGE_LABEL + row.getLong(0));
+					logger.info("Added link from " + STAGE_LABEL + source
+							+ "to " + STAGE_LABEL + row.getLong(0));
+				}
 		}
 
 		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(

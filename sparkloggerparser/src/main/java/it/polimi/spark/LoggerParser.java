@@ -43,6 +43,7 @@ public class LoggerParser {
 	static final Logger logger = LoggerFactory.getLogger(LoggerParser.class);
 	static SQLContext sqlContext;
 	static final String STAGE_LABEL = "Stage_";
+	static final String JOB_LABEL = "Job_";
 	static final String RDD_LABEL = "RDD_";
 
 	public static void main(String[] args) throws IOException,
@@ -88,8 +89,8 @@ public class LoggerParser {
 		}
 
 		logger.info("Reding logs from: " + config.inputFile);
-	 
-		//if the file does not exist
+
+		// if the file does not exist
 		if (config.inputFile != null
 				&& !hdfs.exists(new Path(config.inputFile))) {
 			logger.info("Input file " + config.inputFile + " does not exist");
@@ -122,15 +123,38 @@ public class LoggerParser {
 		saveListToCSV(stageDetails, "StageDetails.csv");
 
 		List<RDD> rdds = extractRDDs(stageDetails);
+		List<Stage> stages = extractStages(stageDetails);
 
 		// save the graph dot files for visualization
-		printStageGraph(stageDetails);
-		// printRDDGraph(stageDetails);
+		printStageGraph(stages);
 		printRDDGraph(rdds);
 
 		// clean up the mess
 		hdfs.close();
 		sc.close();
+	}
+
+	private static List<Stage> extractStages(DataFrame stageDetails) {
+		List<Stage> stages = new ArrayList<Stage>();
+		for (Row row : stageDetails.select("Job ID", "id", "parentIDs", "name").distinct()
+				.collectAsList()) {
+			List<Long> parentList = null;
+			if (row.get(2) instanceof scala.collection.immutable.List<?>)
+				parentList = JavaConversions.asJavaList((Seq<Long>) row.get(2));
+			else if (row.get(2) instanceof ArrayBuffer<?>)
+				parentList = JavaConversions.asJavaList((ArrayBuffer<Long>) row
+						.get(2));
+			else {
+				logger.warn("Could not parse Stage Parent IDs Serialization:"
+						+ row.get(2).toString() + " class: "
+						+ row.get(2).getClass() + " Object: " + row.get(2));
+			}
+			stages.add(new Stage(row.getLong(0), row.getLong(1), parentList,
+					row.getString(3)));
+
+		}
+
+		return stages;
 	}
 
 	/**
@@ -157,7 +181,8 @@ public class LoggerParser {
 
 			long scopeID = 0;
 			String scopeName = null;
-			if (!row.getString(3).isEmpty() && row.getString(3).startsWith("{")) {
+			if (row.get(3) != null && !row.getString(3).isEmpty()
+					&& row.getString(3).startsWith("{")) {
 				JsonObject scopeObject = new JsonParser().parse(
 						row.getString(3)).getAsJsonObject();
 				scopeID = scopeObject.get("id").getAsLong();
@@ -173,8 +198,8 @@ public class LoggerParser {
 
 	/**
 	 * builds the graph with RDD dependencies and saves it into a .dot file that
-	 * can be used for visualization, starting from a list of RDDs,
-	 * Thisinformation include RDD ID, and names
+	 * can be used for visualization, starting from a list of RDDs, This
+	 * information include RDD ID, and names
 	 * 
 	 * @param rdds
 	 * @throws IOException
@@ -185,12 +210,10 @@ public class LoggerParser {
 				DefaultEdge.class);
 
 		// build an hashmap to look for rdds quickly
+		// add vertexes to the graph
 		HashMap<Long, RDD> rddMap = new HashMap<Long, RDD>(rdds.size());
-		for (RDD rdd : rdds)
-			rddMap.put(rdd.getId(), rdd);
-
-		// add all vertexes first
 		for (RDD rdd : rdds) {
+			rddMap.put(rdd.getId(), rdd);
 			dag.addVertex(rdd);
 			logger.info("Added RDD" + rdd.getId() + " to the graph");
 		}
@@ -227,6 +250,59 @@ public class LoggerParser {
 	}
 
 	/**
+	 * builds the graph with stages dependencies and saves it into a .dot file
+	 * that can be used for visualization, starting from a list of stages
+	 * 
+	 * @param stages
+	 * @throws IOException
+	 */
+	private static void printStageGraph(List<Stage> stages) throws IOException {
+		DirectedAcyclicGraph<Stage, DefaultEdge> dag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
+				DefaultEdge.class);
+
+		// build an hashmap to look for stages quickly
+		// and add vertexes to the graph
+		HashMap<Long, Stage> stageMap = new HashMap<Long, Stage>(stages.size());
+		for (Stage stage : stages) {
+			stageMap.put(stage.getId(), stage);
+			dag.addVertex(stage);
+			logger.info("Added Stage " + stage.getId() + " to the graph");
+		}
+
+		// add all edges then
+		for (Stage stage : stages) {
+			if (stage.getParentIDs() != null)
+				for (Long source : stage.getParentIDs()) {
+					dag.addEdge(stageMap.get(source), stage);
+					logger.info("Added link from Stage " + source + "to Stage"
+							+ stage.getId());
+				}
+		}
+
+		DOTExporter<Stage, DefaultEdge> exporter = new DOTExporter<Stage, DefaultEdge>(
+				new VertexNameProvider<Stage>() {
+
+					public String getVertexName(Stage stage) {
+						return JOB_LABEL + stage.getJobId() + STAGE_LABEL
+								+ stage.getId();
+					}
+				}, new VertexNameProvider<Stage>() {
+
+					public String getVertexName(Stage stage) {
+						return JOB_LABEL + stage.getJobId() + " " + STAGE_LABEL
+								+ stage.getId();
+					}
+				}, null);
+
+		OutputStream os = hdfs.create(new Path(config.outputFile,
+				"stage-graph.dot"));
+		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
+				"UTF-8"));
+		exporter.export(br, dag);
+		br.close();
+	}
+
+	/**
 	 * builds the graph with RDD dependencies and saves it into a .dot file that
 	 * can be used for visualization, starting from the stageDetails. this
 	 * visualization includes only RDD IDs
@@ -234,6 +310,7 @@ public class LoggerParser {
 	 * @param stageDetails
 	 * @throws IOException
 	 */
+	@Deprecated
 	private static void printRDDGraph(DataFrame stageDetails)
 			throws IOException {
 		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
@@ -284,6 +361,7 @@ public class LoggerParser {
 	 * @param stageDetails
 	 * @throws IOException
 	 */
+	@Deprecated
 	private static void printStageGraph(DataFrame stageDetails)
 			throws IOException {
 
@@ -313,10 +391,11 @@ public class LoggerParser {
 
 			if (sources != null)
 				for (Long source : sources) {
+					logger.info("Adding link from " + STAGE_LABEL + source
+							+ "to " + STAGE_LABEL + row.getLong(0));
 					dag.addEdge(STAGE_LABEL + source,
 							STAGE_LABEL + row.getLong(0));
-					logger.info("Added link from " + STAGE_LABEL + source
-							+ "to " + STAGE_LABEL + row.getLong(0));
+
 				}
 		}
 
@@ -355,9 +434,14 @@ public class LoggerParser {
 						+ "		FROM stageEndInfos LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo")
 				.registerTempTable("rddInfos");
 
-		// merge the three tables to get the desired information
-		DataFrame stageDetails = sqlContext
-				.sql("SELECT 	`start.Stage Info.Stage ID` AS id,"
+		// initialize the extendedJobInfos table with initial and final ids for
+		// job stages
+		initializeJobInfos();
+
+		// merge the stages start and stage end tables with rdd table to get the
+		// desired information
+		sqlContext
+				.sql("SELECT	`start.Stage Info.Stage ID` AS id,"
 						+ "		`start.Stage Info.Parent IDs` AS parentIDs,"
 						+ "		`start.Stage Info.Stage Name` AS name,"
 						+ "		`start.Stage Info.Number of Tasks` AS numberOfTasks,"
@@ -382,12 +466,57 @@ public class LoggerParser {
 						+ "		JOIN stageEndInfos AS finish"
 						+ "		ON `start.Stage Info.Stage ID`=`finish.Stage Info.Stage ID`"
 						+ "		JOIN rddInfos"
-						+ "		ON `start.Stage Info.Stage ID`=`rddInfos.Stage ID`");
+						+ "		ON `start.Stage Info.Stage ID`=`rddInfos.Stage ID`")
+				.registerTempTable("stages");
 
-		stageDetails.registerTempTable("stages");
+		DataFrame stageDetails = sqlContext
+				.sql("SELECT `extendedJobStartInfos.Job ID`,"
+						+ "stages.* "
+						+ "FROM stages "
+						+ "JOIN extendedJobStartInfos "
+						+ "ON stages.id >= extendedJobStartInfos.minStageID AND stages.id <= extendedJobStartInfos.maxStageID");
+		// jobDetails.show((int) jobDetails.count());
 
 		return stageDetails;
 
+	}
+
+	/**
+	 * Initialized the extendedJobStartInfos by selecting all the events that
+	 * end with "Jobstart" label and adding two columns containing the m inimum
+	 * and maximum stage id numbers for the job
+	 */
+	private static void initializeJobInfos() {
+		// register the job submission event as a table, we will use it later to
+		// divide stages into jobs
+		// 1) select all the JobStart Events
+		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%JobStart'")
+				.registerTempTable("jobStartInfos");
+
+		// 2a) create a temporary table expanding the Stage IDs column (it
+		// contains an array)
+		sqlContext
+				.sql("SELECT `Job ID`, "
+						+ "expandedStageIds "
+						+ "FROM jobStartInfos LATERAL VIEW explode(`Stage IDs`) stageInfoTable AS expandedStageIds")
+				.registerTempTable("JobID2StageID");
+		// 2b) get the maximum and minimum from the expanded table
+		// could not do in one query because hive does not support
+		// min(explode())) notation
+		sqlContext.sql(
+				"SELECT `Job ID`, " + "MIN(expandedStageIds) AS minStageID, "
+						+ "MAX(expandedStageIds) maxStageID "
+						+ "FROM JobID2StageID " + "GROUP BY `Job ID`")
+				.registerTempTable("JobStageBoundaries");
+		// 3) Add the min and max columns to the start job table
+		sqlContext
+				.sql("SELECT jobStartInfos.*, "
+						+ "JobStageBoundaries.minStageID,"
+						+ "JobStageBoundaries.maxStageID "
+						+ "FROM jobStartInfos "
+						+ "JOIN JobStageBoundaries "
+						+ "ON `jobStartInfos.Job ID`=`JobStageBoundaries.Job ID`")
+				.registerTempTable("extendedJobStartInfos");
 	}
 
 	/**

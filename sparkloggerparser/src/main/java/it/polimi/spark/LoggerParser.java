@@ -136,8 +136,8 @@ public class LoggerParser {
 
 	private static List<Stage> extractStages(DataFrame stageDetails) {
 		List<Stage> stages = new ArrayList<Stage>();
-		for (Row row : stageDetails.select("Job ID", "id", "parentIDs", "name").distinct()
-				.collectAsList()) {
+		for (Row row : stageDetails.select("Job ID", "id", "parentIDs", "name")
+				.distinct().collectAsList()) {
 			List<Long> parentList = null;
 			if (row.get(2) instanceof scala.collection.immutable.List<?>)
 				parentList = JavaConversions.asJavaList((Seq<Long>) row.get(2));

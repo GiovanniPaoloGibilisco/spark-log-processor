@@ -113,21 +113,22 @@ public class LoggerParser {
 		logsframe.registerTempTable("events");
 
 		// query the data
-		DataFrame taskDetails = retrieveTaskInformation();
+		// DataFrame taskDetails = retrieveTaskInformation();
 
 		DataFrame stageDetails = retrieveStageInformation();
+		stageDetails.show((int) stageDetails.count());
 
 		// save CSV with performance information
-		saveListToCSV(taskDetails, "TaskDetails.csv");
+		// saveListToCSV(taskDetails, "TaskDetails.csv");
 
-		saveListToCSV(stageDetails, "StageDetails.csv");
+		// saveListToCSV(stageDetails, "StageDetails.csv");
 
-		List<RDD> rdds = extractRDDs(stageDetails);
+		// List<RDD> rdds = extractRDDs(stageDetails);
 		List<Stage> stages = extractStages(stageDetails);
 
 		// save the graph dot files for visualization
 		printStageGraph(stages);
-		printRDDGraph(rdds);
+		// printRDDGraph(rdds);
 
 		// clean up the mess
 		hdfs.close();
@@ -136,7 +137,8 @@ public class LoggerParser {
 
 	private static List<Stage> extractStages(DataFrame stageDetails) {
 		List<Stage> stages = new ArrayList<Stage>();
-		for (Row row : stageDetails.select("Job ID", "id", "parentIDs", "name")
+		for (Row row : stageDetails
+				.select("Job ID", "Stage ID", "Parent IDs", "Stage Name")
 				.distinct().collectAsList()) {
 			List<Long> parentList = null;
 			if (row.get(2) instanceof scala.collection.immutable.List<?>)
@@ -418,65 +420,84 @@ public class LoggerParser {
 	 */
 	private static DataFrame retrieveStageInformation()
 			throws UnsupportedEncodingException, IOException {
-		// register two tables, one for the Stgae start event and the other for
-		// the Stage end event
-		sqlContext.sql(
-				"SELECT * FROM events WHERE Event LIKE '%StageSubmitted'")
-				.registerTempTable("stageStartInfos");
+
+		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%JobStart'")
+				.registerTempTable("jobs");
 		sqlContext.sql(
 				"SELECT * FROM events WHERE Event LIKE '%StageCompleted'")
-				.registerTempTable("stageEndInfos");
+				.registerTempTable("stageComputed");
 
-		// expand the nested structure of the RDD Info and register as a
-		// temporary table
-		sqlContext
-				.sql("	SELECT `Stage Info.Stage ID`, RDDInfo"
-						+ "		FROM stageEndInfos LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo")
-				.registerTempTable("rddInfos");
+		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%JobEnd'")
+				.registerTempTable("jobEnd");
 
-		// initialize the extendedJobInfos table with initial and final ids for
-		// job stages
-		initializeJobInfos();
+		sqlContext.sql(
+				"SELECT  `Job ID`," + "`Submission Time`," + "`Stage Infos`,"
+						+ "`Stage IDs`" + "FROM jobs ").registerTempTable(
+				"jobs");
 
-		// merge the stages start and stage end tables with rdd table to get the
-		// desired information
-		sqlContext
-				.sql("SELECT	`start.Stage Info.Stage ID` AS id,"
-						+ "		`start.Stage Info.Parent IDs` AS parentIDs,"
-						+ "		`start.Stage Info.Stage Name` AS name,"
-						+ "		`start.Stage Info.Number of Tasks` AS numberOfTasks,"
-						+ "		`finish.Stage Info.Submission Time` AS submissionTime,"
-						+ "		`finish.Stage Info.Completion Time` AS completionTime,"
-						+ "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
-						+ "		`rddInfo.RDD ID`,"
-						+ "		`rddInfo.Scope` AS RDDScope,"
-						+ "		`rddInfo.Name` AS RDDName,"
-						+ "		`rddInfo.Parent IDs` AS RDDParentIDs,"
-						+ "		`rddInfo.Storage Level.Use Disk`,"
-						+ "		`rddInfo.Storage Level.Use Memory`,"
-						+ "		`rddInfo.Storage Level.Use ExternalBlockStore`,"
-						+ "		`rddInfo.Storage Level.Deserialized`,"
-						+ "		`rddInfo.Storage Level.Replication`,"
-						+ "		`rddInfo.Number of Partitions`,"
-						+ "		`rddInfo.Number of Cached Partitions`,"
-						+ "		`rddInfo.Memory Size`,"
-						+ "		`rddInfo.ExternalBlockStore Size`,"
-						+ "		`rddInfo.Disk Size`"
-						+ "		FROM stageStartInfos AS start"
-						+ "		JOIN stageEndInfos AS finish"
-						+ "		ON `start.Stage Info.Stage ID`=`finish.Stage Info.Stage ID`"
-						+ "		JOIN rddInfos"
-						+ "		ON `start.Stage Info.Stage ID`=`rddInfos.Stage ID`")
-				.registerTempTable("stages");
+		retrieveInitialAndFinalStage();
 
 		DataFrame stageDetails = sqlContext
-				.sql("SELECT `extendedJobStartInfos.Job ID`,"
-						+ "stages.* "
-						+ "FROM stages "
-						+ "JOIN extendedJobStartInfos "
-						+ "ON stages.id >= extendedJobStartInfos.minStageID AND stages.id <= extendedJobStartInfos.maxStageID");
-		// jobDetails.show((int) jobDetails.count());
+				.sql("SELECT  *,"
+						+ "`StageInfo.Stage ID`,"
+						+ "`StageInfo.Stage Name`,"
+						+ "`StageInfo.Parent IDs`"
+						+ "FROM jobs LATERAL VIEW explode(`Stage Infos`) stageInfosTable AS StageInfo");
 
+		/*
+		 * To get the stages actually computed in the jobs table DataFrame
+		 * stageDetails = sqlContext.sql("SELECT jobs.*,"
+		 * 
+		 * + "`stageComputed.Stage Info.Stage ID`," +
+		 * "`stageComputed.Stage Info.Stage Name` " + "FROM jobs " +
+		 * "JOIN stageComputed " +
+		 * "ON `stageComputed.Stage Info.Stage ID` >= jobs.minStageID AND `stageComputed.Stage Info.Stage ID` <= jobs.maxStageID"
+		 * );
+		 */
+
+		/*
+		 * // expand the nested structure of the RDD Info and register as a //
+		 * temporary table sqlContext
+		 * .sql("	SELECT `Stage Info.Stage ID`, RDDInfo" +
+		 * "		FROM stageEndInfos LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo"
+		 * ) .registerTempTable("rddInfos");
+		 * 
+		 * // initialize the extendedJobInfos table with initial and final ids
+		 * for // job stages initializeJobInfos();
+		 * 
+		 * // merge the stages start and stage end tables with rdd table to get
+		 * the // desired information sqlContext
+		 * .sql("SELECT	`start.Stage Info.Stage ID` AS id," +
+		 * "		`start.Stage Info.Parent IDs` AS parentIDs," +
+		 * "		`start.Stage Info.Stage Name` AS name," +
+		 * "		`start.Stage Info.Number of Tasks` AS numberOfTasks," +
+		 * "		`finish.Stage Info.Submission Time` AS submissionTime," +
+		 * "		`finish.Stage Info.Completion Time` AS completionTime," +
+		 * "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
+		 * + "		`rddInfo.RDD ID`," + "		`rddInfo.Scope` AS RDDScope," +
+		 * "		`rddInfo.Name` AS RDDName," +
+		 * "		`rddInfo.Parent IDs` AS RDDParentIDs," +
+		 * "		`rddInfo.Storage Level.Use Disk`," +
+		 * "		`rddInfo.Storage Level.Use Memory`," +
+		 * "		`rddInfo.Storage Level.Use ExternalBlockStore`," +
+		 * "		`rddInfo.Storage Level.Deserialized`," +
+		 * "		`rddInfo.Storage Level.Replication`," +
+		 * "		`rddInfo.Number of Partitions`," +
+		 * "		`rddInfo.Number of Cached Partitions`," +
+		 * "		`rddInfo.Memory Size`," + "		`rddInfo.ExternalBlockStore Size`," +
+		 * "		`rddInfo.Disk Size`" + "		FROM stageStartInfos AS start" +
+		 * "		JOIN stageEndInfos AS finish" +
+		 * "		ON `start.Stage Info.Stage ID`=`finish.Stage Info.Stage ID`" +
+		 * "		JOIN rddInfos" +
+		 * "		ON `start.Stage Info.Stage ID`=`rddInfos.Stage ID`")
+		 * .registerTempTable("stages");
+		 * 
+		 * DataFrame stageDetails = sqlContext
+		 * .sql("SELECT `extendedJobStartInfos.Job ID`," + "stages.* " +
+		 * "FROM stages " + "JOIN extendedJobStartInfos " +
+		 * "ON stages.id >= extendedJobStartInfos.minStageID AND stages.id <= extendedJobStartInfos.maxStageID"
+		 * ); // jobDetails.show((int) jobDetails.count());
+		 */
 		return stageDetails;
 
 	}
@@ -486,21 +507,15 @@ public class LoggerParser {
 	 * end with "Jobstart" label and adding two columns containing the m inimum
 	 * and maximum stage id numbers for the job
 	 */
-	private static void initializeJobInfos() {
-		// register the job submission event as a table, we will use it later to
-		// divide stages into jobs
-		// 1) select all the JobStart Events
-		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%JobStart'")
-				.registerTempTable("jobStartInfos");
-
-		// 2a) create a temporary table expanding the Stage IDs column (it
+	private static void retrieveInitialAndFinalStage() {
+		// 1a) create a temporary table expanding the Stage IDs column (it
 		// contains an array)
 		sqlContext
 				.sql("SELECT `Job ID`, "
 						+ "expandedStageIds "
-						+ "FROM jobStartInfos LATERAL VIEW explode(`Stage IDs`) stageInfoTable AS expandedStageIds")
+						+ "FROM jobs LATERAL VIEW explode(`Stage IDs`) stageInfoTable AS expandedStageIds")
 				.registerTempTable("JobID2StageID");
-		// 2b) get the maximum and minimum from the expanded table
+		// 1b) get the maximum and minimum from the expanded table
 		// could not do in one query because hive does not support
 		// min(explode())) notation
 		sqlContext.sql(
@@ -508,15 +523,13 @@ public class LoggerParser {
 						+ "MAX(expandedStageIds) maxStageID "
 						+ "FROM JobID2StageID " + "GROUP BY `Job ID`")
 				.registerTempTable("JobStageBoundaries");
-		// 3) Add the min and max columns to the start job table
-		sqlContext
-				.sql("SELECT jobStartInfos.*, "
-						+ "JobStageBoundaries.minStageID,"
-						+ "JobStageBoundaries.maxStageID "
-						+ "FROM jobStartInfos "
+		// 2) Add the min and max columns to the start job table
+		sqlContext.sql(
+				"SELECT jobs.*, " + "JobStageBoundaries.minStageID,"
+						+ "JobStageBoundaries.maxStageID " + "FROM jobs "
 						+ "JOIN JobStageBoundaries "
-						+ "ON `jobStartInfos.Job ID`=`JobStageBoundaries.Job ID`")
-				.registerTempTable("extendedJobStartInfos");
+						+ "ON `jobs.Job ID`=`JobStageBoundaries.Job ID`")
+				.registerTempTable("jobs");
 	}
 
 	/**

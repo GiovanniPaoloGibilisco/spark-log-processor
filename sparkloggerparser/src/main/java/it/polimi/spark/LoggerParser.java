@@ -22,11 +22,12 @@ import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.HiveContext;
+import org.jgraph.graph.AttributeMap;
 import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
 import org.jgrapht.ext.ComponentAttributeProvider;
 import org.jgrapht.ext.DOTExporter;
-import org.jgrapht.ext.StringNameProvider;
+import org.jgrapht.ext.EdgeNameProvider;
 import org.jgrapht.ext.VertexNameProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -115,28 +116,62 @@ public class LoggerParser {
 		// register the main table with all the logs as "events"
 		logsframe.registerTempTable("events");
 
-		// query the data
-		// DataFrame taskDetails = retrieveTaskInformation();
-
 		DataFrame stageDetails = retrieveStageInformation();
-		stageDetails.show((int) stageDetails.count());
+		// stageDetails.show((int) stageDetails.count());
 
 		// save CSV with performance information
-		// saveListToCSV(taskDetails, "TaskDetails.csv");
 
-		// saveListToCSV(stageDetails, "StageDetails.csv");
-
-		// List<RDD> rdds = extractRDDs(stageDetails);
+		if (config.task) {
+			DataFrame taskDetails = retrieveTaskInformation();
+			saveListToCSV(taskDetails, "TaskDetails.csv");
+		}
 
 		if (config.buildStageGraph) {
 			List<Stage> stages = extractStages(stageDetails);
+			// saveListToCSV(stageDetails, "StageDetails.csv");
 			printStageGraph(stages);
 		}
-		// printRDDGraph(rdds);
 
+		if (config.buildRDDGraph) {
+			// register the current dataframe as jobs table
+			stageDetails.registerTempTable("jobs");
+			DataFrame rddDetails = retrieveRDDInformation();
+//			rddDetails.show();
+			List<RDD> rdds = extractRDDs(rddDetails);
+			printRDDGraph(rdds);
+		}
 		// clean up the mess
 		hdfs.close();
 		sc.close();
+	}
+
+	/**
+	 * collects the information the RDDs (id, name, parents, scope, number of
+	 * partitions) by looking into the "jobs" table
+	 * 
+	 * @return
+	 */
+	private static DataFrame retrieveRDDInformation() {
+
+		DataFrame rdd = sqlContext
+				.sql("SELECT `stageinfo.Stage ID`, "
+						+ "`RDDInfo.RDD ID`,"
+						+ "RDDInfo.Name,"
+						+ "RDDInfo.Scope,"
+						+ "`RDDInfo.Parent IDs`,"
+						+ "`RDDInfo.Storage Level.Use Disk`,"
+						+ "`RDDInfo.Storage Level.Use Memory`,"
+						+ "`RDDInfo.Storage Level.Use ExternalBlockStore`,"
+						+ "`RDDInfo.Storage Level.Deserialized`,"
+						+ "`RDDInfo.Storage Level.Replication`,"
+						+ "`RDDInfo.Number of Partitions`,"
+						+ "`RDDInfo.Number of Cached Partitions`,"
+						+ "`RDDInfo.Memory Size`,"
+						+ "`RDDInfo.ExternalBlockStore Size`,"
+						+ "`RDDInfo.Disk Size`"
+						+ "FROM jobs LATERAL VIEW explode(`stageinfo.RDD Info`) rddInfoTable AS RDDInfo");
+
+		return rdd;
 	}
 
 	private static List<Stage> extractStages(DataFrame stageDetails) {
@@ -183,10 +218,11 @@ public class LoggerParser {
 	 * @param stageDetails
 	 * @return list of RDDs
 	 */
-	private static List<RDD> extractRDDs(DataFrame stageDetails) {
+	private static List<RDD> extractRDDs(DataFrame rddDetails) {
 		List<RDD> rdds = new ArrayList<RDD>();
-		for (Row row : stageDetails.select("RDD ID", "RDDParentIDs", "RDDName",
-				"RDDScope", "Number of Partitions").collectAsList()) {
+		DataFrame table = rddDetails.select("RDD ID", "Parent IDs", "Name",
+				"Scope", "Number of Partitions", "Stage ID").distinct();
+		for (Row row : table.collectAsList()) {
 			List<Long> parentList = null;
 			if (row.get(1) instanceof scala.collection.immutable.List<?>)
 				parentList = JavaConversions.asJavaList((Seq<Long>) row.get(1));
@@ -209,8 +245,8 @@ public class LoggerParser {
 				scopeName = scopeObject.get("name").getAsString();
 			}
 
-			rdds.add(new RDD(row.getLong(0), parentList, row.getString(2),
-					scopeID, scopeName, row.getLong(4)));
+			rdds.add(new RDD(row.getLong(0), row.getString(2), parentList,
+					scopeID, row.getLong(4), scopeName, row.getLong(5)));
 
 		}
 		return rdds;
@@ -234,7 +270,8 @@ public class LoggerParser {
 		HashMap<Long, RDD> rddMap = new HashMap<Long, RDD>(rdds.size());
 		for (RDD rdd : rdds) {
 			rddMap.put(rdd.getId(), rdd);
-			dag.addVertex(rdd);
+			if (!dag.containsVertex(rdd))
+				dag.addVertex(rdd);
 			logger.info("Added RDD" + rdd.getId() + " to the graph");
 		}
 
@@ -242,7 +279,19 @@ public class LoggerParser {
 		for (RDD rdd : rdds) {
 			if (rdd.getParentIDs() != null)
 				for (Long source : rdd.getParentIDs()) {
-					dag.addEdge(rddMap.get(source), rdd);
+					if (!dag.containsEdge(rddMap.get(source), rdd)) {
+						dag.addEdge(rddMap.get(source), rdd);
+						Map<String, Integer> map = new LinkedHashMap<>();
+						map.put("cardinality", 1);
+						dag.getEdge(rddMap.get(source), rdd).setAttributes(
+								new AttributeMap(map));
+					} else {
+						int cardinality = (int) dag
+								.getEdge(rddMap.get(source), rdd)
+								.getAttributes().get("cardinality");
+						dag.getEdge(rddMap.get(source), rdd).getAttributes()
+								.put("cardinality", cardinality + 1);
+					}
 					logger.info("Added link from RDD " + source + "to RDD"
 							+ rdd.getId());
 				}
@@ -252,14 +301,27 @@ public class LoggerParser {
 				new VertexNameProvider<RDD>() {
 
 					public String getVertexName(RDD rdd) {
-						return RDD_LABEL + rdd.getId();
+						return STAGE_LABEL + rdd.getStageID() + RDD_LABEL
+								+ rdd.getId();
 					}
 				}, new VertexNameProvider<RDD>() {
 
 					public String getVertexName(RDD rdd) {
-						return rdd.getName() + " (" + rdd.getId() + ")";
+						return rdd.getName() + " (" + rdd.getStageID() + ","
+								+ rdd.getId() + ") ";
 					}
-				}, null);
+				}, new EdgeNameProvider<DefaultEdge>() {
+
+					@Override
+					public String getEdgeName(DefaultEdge edge) {
+						AttributeMap attributes = edge.getAttributes();
+						if (attributes != null)
+							if ((int) attributes.get("cardinality") > 1)
+								return attributes.get("cardinality").toString();
+
+						return null;
+					}
+				});
 
 		OutputStream os = hdfs.create(new Path(config.outputFile,
 				"rdd-graph.dot"));
@@ -318,7 +380,7 @@ public class LoggerParser {
 					public Map<String, String> getComponentAttributes(
 							Stage stage) {
 						Map<String, String> map = new LinkedHashMap<String, String>();
-						if (stage.isExecuted()){
+						if (stage.isExecuted()) {
 							map.put("style", "filled");
 							map.put("fillcolor", "red");
 						}
@@ -395,49 +457,6 @@ public class LoggerParser {
 							+ "ON `stageComputed.Stage Info.Stage ID` = `jobs.Stage ID`");
 		}
 
-		/*
-		 * // expand the nested structure of the RDD Info and register as a //
-		 * temporary table sqlContext
-		 * .sql("	SELECT `Stage Info.Stage ID`, RDDInfo" +
-		 * "		FROM stageEndInfos LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo"
-		 * ) .registerTempTable("rddInfos");
-		 * 
-		 * // initialize the extendedJobInfos table with initial and final ids
-		 * for // job stages initializeJobInfos();
-		 * 
-		 * // merge the stages start and stage end tables with rdd table to get
-		 * the // desired information sqlContext
-		 * .sql("SELECT	`start.Stage Info.Stage ID` AS id," +
-		 * "		`start.Stage Info.Parent IDs` AS parentIDs," +
-		 * "		`start.Stage Info.Stage Name` AS name," +
-		 * "		`start.Stage Info.Number of Tasks` AS numberOfTasks," +
-		 * "		`finish.Stage Info.Submission Time` AS submissionTime," +
-		 * "		`finish.Stage Info.Completion Time` AS completionTime," +
-		 * "		`finish.Stage Info.Completion Time` - `finish.Stage Info.Submission Time` AS executionTime,"
-		 * + "		`rddInfo.RDD ID`," + "		`rddInfo.Scope` AS RDDScope," +
-		 * "		`rddInfo.Name` AS RDDName," +
-		 * "		`rddInfo.Parent IDs` AS RDDParentIDs," +
-		 * "		`rddInfo.Storage Level.Use Disk`," +
-		 * "		`rddInfo.Storage Level.Use Memory`," +
-		 * "		`rddInfo.Storage Level.Use ExternalBlockStore`," +
-		 * "		`rddInfo.Storage Level.Deserialized`," +
-		 * "		`rddInfo.Storage Level.Replication`," +
-		 * "		`rddInfo.Number of Partitions`," +
-		 * "		`rddInfo.Number of Cached Partitions`," +
-		 * "		`rddInfo.Memory Size`," + "		`rddInfo.ExternalBlockStore Size`," +
-		 * "		`rddInfo.Disk Size`" + "		FROM stageStartInfos AS start" +
-		 * "		JOIN stageEndInfos AS finish" +
-		 * "		ON `start.Stage Info.Stage ID`=`finish.Stage Info.Stage ID`" +
-		 * "		JOIN rddInfos" +
-		 * "		ON `start.Stage Info.Stage ID`=`rddInfos.Stage ID`")
-		 * .registerTempTable("stages");
-		 * 
-		 * DataFrame stageDetails = sqlContext
-		 * .sql("SELECT `extendedJobStartInfos.Job ID`," + "stages.* " +
-		 * "FROM stages " + "JOIN extendedJobStartInfos " +
-		 * "ON stages.id >= extendedJobStartInfos.minStageID AND stages.id <= extendedJobStartInfos.maxStageID"
-		 * ); // jobDetails.show((int) jobDetails.count());
-		 */
 		return stageDetails;
 
 	}
@@ -445,7 +464,8 @@ public class LoggerParser {
 	/**
 	 * Initialized the extendedJobStartInfos by selecting all the events that
 	 * end with "Jobstart" label and adding two columns containing the m inimum
-	 * and maximum stage id numbers for the job
+	 * and maximum stage id numbers for the job (operates modifying the "jobs"
+	 * table)
 	 */
 	private static void retrieveInitialAndFinalStage() {
 		// 1a) create a temporary table expanding the Stage IDs column (it

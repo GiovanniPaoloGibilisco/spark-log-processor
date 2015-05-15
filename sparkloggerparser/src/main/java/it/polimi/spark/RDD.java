@@ -10,23 +10,31 @@ public class RDD {
 	private Long partitions;
 	private Long scopeID;
 	private String scopeName;
+	private Long stageID;
 
 	/**
 	 * @param id
-	 * @param parentIDs
 	 * @param name
+	 * @param parentIDs
+	 * @param partitions
 	 * @param scopeID
 	 * @param scopeName
-	 * @param partitions
+	 * @param stageID
 	 */
-	public RDD(Long id, List<Long> parentIDs, String name, Long scopeID,
-			String scopeName, Long partitions) {
+	public RDD(Long id, String name, List<Long> parentIDs, Long partitions,
+			Long scopeID, String scopeName, Long stageID) {
+		super();
 		this.id = id;
-		this.parentIDs = parentIDs;
 		this.name = name;
+		this.parentIDs = parentIDs;
+		this.partitions = partitions;
 		this.scopeID = scopeID;
 		this.scopeName = scopeName;
-		this.partitions = partitions;
+		this.stageID = stageID;
+	}
+
+	public Long getStageID() {
+		return stageID;
 	}
 
 	public Long getId() {

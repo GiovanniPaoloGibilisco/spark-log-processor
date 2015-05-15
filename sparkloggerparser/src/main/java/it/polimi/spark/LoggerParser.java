@@ -8,7 +8,9 @@ import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 
 import org.apache.hadoop.conf.Configuration;
@@ -22,6 +24,7 @@ import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.HiveContext;
 import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
+import org.jgrapht.ext.ComponentAttributeProvider;
 import org.jgrapht.ext.DOTExporter;
 import org.jgrapht.ext.StringNameProvider;
 import org.jgrapht.ext.VertexNameProvider;
@@ -124,10 +127,11 @@ public class LoggerParser {
 		// saveListToCSV(stageDetails, "StageDetails.csv");
 
 		// List<RDD> rdds = extractRDDs(stageDetails);
-		List<Stage> stages = extractStages(stageDetails);
 
-		// save the graph dot files for visualization
-		printStageGraph(stages);
+		if (config.buildStageGraph) {
+			List<Stage> stages = extractStages(stageDetails);
+			printStageGraph(stages);
+		}
 		// printRDDGraph(rdds);
 
 		// clean up the mess
@@ -137,9 +141,15 @@ public class LoggerParser {
 
 	private static List<Stage> extractStages(DataFrame stageDetails) {
 		List<Stage> stages = new ArrayList<Stage>();
-		for (Row row : stageDetails
-				.select("Job ID", "Stage ID", "Parent IDs", "Stage Name")
-				.distinct().collectAsList()) {
+		DataFrame table = null;
+		if (config.filterExecutedStages)
+			table = stageDetails.select("Job ID", "Stage ID", "Parent IDs",
+					"Stage Name", "computed").orderBy("Job ID", "Stage ID");
+		else
+			table = stageDetails.select("Job ID", "Stage ID", "Parent IDs",
+					"Stage Name").orderBy("Job ID", "Stage ID");
+
+		for (Row row : table.distinct().collectAsList()) {
 			List<Long> parentList = null;
 			if (row.get(2) instanceof scala.collection.immutable.List<?>)
 				parentList = JavaConversions.asJavaList((Seq<Long>) row.get(2));
@@ -151,8 +161,16 @@ public class LoggerParser {
 						+ row.get(2).toString() + " class: "
 						+ row.get(2).getClass() + " Object: " + row.get(2));
 			}
-			stages.add(new Stage(row.getLong(0), row.getLong(1), parentList,
-					row.getString(3)));
+
+			Stage stage = null;
+			if (config.filterExecutedStages)
+				stage = new Stage(row.getLong(0), row.getLong(1), parentList,
+						row.getString(3), row.getBoolean(4));
+			else
+				stage = new Stage(row.getLong(0), row.getLong(1), parentList,
+						row.getString(3), false);
+
+			stages.add(stage);
 
 		}
 
@@ -267,23 +285,23 @@ public class LoggerParser {
 		HashMap<Long, Stage> stageMap = new HashMap<Long, Stage>(stages.size());
 		for (Stage stage : stages) {
 			stageMap.put(stage.getId(), stage);
+			logger.info("Adding Stage " + stage.getId() + " to the graph");
 			dag.addVertex(stage);
-			logger.info("Added Stage " + stage.getId() + " to the graph");
+
 		}
 
 		// add all edges then
 		for (Stage stage : stages) {
 			if (stage.getParentIDs() != null)
 				for (Long source : stage.getParentIDs()) {
-					dag.addEdge(stageMap.get(source), stage);
-					logger.info("Added link from Stage " + source + "to Stage"
+					logger.info("Adding link from Stage " + source + "to Stage"
 							+ stage.getId());
+					dag.addEdge(stageMap.get(source), stage);
 				}
 		}
 
 		DOTExporter<Stage, DefaultEdge> exporter = new DOTExporter<Stage, DefaultEdge>(
 				new VertexNameProvider<Stage>() {
-
 					public String getVertexName(Stage stage) {
 						return JOB_LABEL + stage.getJobId() + STAGE_LABEL
 								+ stage.getId();
@@ -294,7 +312,33 @@ public class LoggerParser {
 						return JOB_LABEL + stage.getJobId() + " " + STAGE_LABEL
 								+ stage.getId();
 					}
-				}, null);
+				}, null, new ComponentAttributeProvider<Stage>() {
+
+					@Override
+					public Map<String, String> getComponentAttributes(
+							Stage stage) {
+						Map<String, String> map = new LinkedHashMap<String, String>();
+						if (stage.isExecuted()){
+							map.put("style", "filled");
+							map.put("fillcolor", "red");
+						}
+						return map;
+					}
+				}, new ComponentAttributeProvider<DefaultEdge>() {
+
+					@Override
+					public Map<String, String> getComponentAttributes(
+							DefaultEdge edge) {
+						Map<String, String> map = new LinkedHashMap<String, String>();
+						if (edge.getSource() instanceof Stage
+								&& ((Stage) edge.getSource()).isExecuted())
+							map.put("color", "red");
+						if (edge.getTarget() instanceof Stage
+								&& ((Stage) edge.getTarget()).isExecuted())
+							map.put("color", "red");
+						return map;
+					}
+				});
 
 		OutputStream os = hdfs.create(new Path(config.outputFile,
 				"stage-graph.dot"));
@@ -302,114 +346,6 @@ public class LoggerParser {
 				"UTF-8"));
 		exporter.export(br, dag);
 		br.close();
-	}
-
-	/**
-	 * builds the graph with RDD dependencies and saves it into a .dot file that
-	 * can be used for visualization, starting from the stageDetails. this
-	 * visualization includes only RDD IDs
-	 * 
-	 * @param stageDetails
-	 * @throws IOException
-	 */
-	@Deprecated
-	private static void printRDDGraph(DataFrame stageDetails)
-			throws IOException {
-		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
-				DefaultEdge.class);
-		// add all vertexes first
-		for (Row row : stageDetails.select("RDD ID").distinct().collectAsList()) {
-			dag.addVertex(RDD_LABEL + row.getLong(0));
-			logger.info("Added " + RDD_LABEL + row.getLong(0) + " to the graph");
-		}
-
-		// add all edges
-		for (Row row : stageDetails.select("RDD ID", "RDDParentIDs")
-				.collectAsList()) {
-			List<Long> sources = null;
-			if (row.get(1) instanceof scala.collection.immutable.List<?>)
-				sources = JavaConversions.asJavaList((Seq<Long>) row.get(1));
-			else if (row.get(1) instanceof ArrayBuffer<?>)
-				sources = JavaConversions.asJavaList((ArrayBuffer<Long>) row
-						.get(1));
-			else {
-				logger.warn("Could not parse RDD PArent IDs Serialization:"
-						+ row.get(1).toString() + " class: "
-						+ row.get(1).getClass() + " Object: " + row.get(1));
-			}
-			if (sources != null)
-				for (Long source : sources) {
-					dag.addEdge(RDD_LABEL + source, RDD_LABEL + row.getLong(0));
-					logger.info("Added link from " + RDD_LABEL + source + "to "
-							+ RDD_LABEL + row.getLong(0));
-				}
-		}
-
-		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
-				new StringNameProvider<String>(), null, null);
-		OutputStream os = hdfs.create(new Path(config.outputFile,
-				"rdd-graph.dot"));
-		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
-				"UTF-8"));
-		exporter.export(br, dag);
-		br.close();
-
-	}
-
-	/**
-	 * builds the graph with stages dependencies and saves it into a .dot file
-	 * that can be used for visualization
-	 * 
-	 * @param stageDetails
-	 * @throws IOException
-	 */
-	@Deprecated
-	private static void printStageGraph(DataFrame stageDetails)
-			throws IOException {
-
-		DirectedAcyclicGraph<String, DefaultEdge> dag = new DirectedAcyclicGraph<String, DefaultEdge>(
-				DefaultEdge.class);
-		// add all vertexes first
-		for (Row row : stageDetails.select("id").distinct().collectAsList()) {
-			dag.addVertex(STAGE_LABEL + row.getLong(0));
-			logger.info("Added " + STAGE_LABEL + row.getLong(0)
-					+ " to the graph");
-		}
-
-		// add all edges
-		for (Row row : stageDetails.select("id", "parentIDs").distinct()
-				.collectAsList()) {
-			List<Long> sources = null;
-			if (row.get(1) instanceof scala.collection.immutable.List<?>)
-				sources = JavaConversions.asJavaList((Seq<Long>) row.get(1));
-			else if (row.get(1) instanceof ArrayBuffer<?>)
-				sources = JavaConversions.asJavaList((ArrayBuffer<Long>) row
-						.get(1));
-			else {
-				logger.warn("Could not parse Stage Parent IDs Serialization:"
-						+ row.get(1).toString() + " class: "
-						+ row.get(1).getClass() + " Object: " + row.get(1));
-			}
-
-			if (sources != null)
-				for (Long source : sources) {
-					logger.info("Adding link from " + STAGE_LABEL + source
-							+ "to " + STAGE_LABEL + row.getLong(0));
-					dag.addEdge(STAGE_LABEL + source,
-							STAGE_LABEL + row.getLong(0));
-
-				}
-		}
-
-		DOTExporter<String, DefaultEdge> exporter = new DOTExporter<String, DefaultEdge>(
-				new StringNameProvider<String>(), null, null);
-		OutputStream os = hdfs.create(new Path(config.outputFile,
-				"stage-graph.dot"));
-		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
-				"UTF-8"));
-		exporter.export(br, dag);
-		br.close();
-
 	}
 
 	/**
@@ -444,16 +380,20 @@ public class LoggerParser {
 						+ "`StageInfo.Parent IDs`"
 						+ "FROM jobs LATERAL VIEW explode(`Stage Infos`) stageInfosTable AS StageInfo");
 
-		/*
-		 * To get the stages actually computed in the jobs table DataFrame
-		 * stageDetails = sqlContext.sql("SELECT jobs.*,"
-		 * 
-		 * + "`stageComputed.Stage Info.Stage ID`," +
-		 * "`stageComputed.Stage Info.Stage Name` " + "FROM jobs " +
-		 * "JOIN stageComputed " +
-		 * "ON `stageComputed.Stage Info.Stage ID` >= jobs.minStageID AND `stageComputed.Stage Info.Stage ID` <= jobs.maxStageID"
-		 * );
-		 */
+		if (config.filterExecutedStages) {
+			stageDetails.registerTempTable("jobs");
+			// To get the stages actually computed in the jobs table DataFrame
+			stageDetails = sqlContext
+					.sql("SELECT jobs.*,"
+							+ "`stageComputed.Stage Info.Completion Time`,"
+							+ "CASE  "
+							+ "WHEN `stageComputed.Stage Info.Completion Time` IS NOT NULL THEN true "
+							+ "WHEN `stageComputed.Stage Info.Completion Time` IS NULL THEN false "
+							+ "END AS computed "
+							+ "FROM jobs "
+							+ "LEFt JOIN stageComputed "
+							+ "ON `stageComputed.Stage Info.Stage ID` = `jobs.Stage ID`");
+		}
 
 		/*
 		 * // expand the nested structure of the RDD Info and register as a //

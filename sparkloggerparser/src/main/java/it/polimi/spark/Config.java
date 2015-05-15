@@ -33,9 +33,9 @@ public class Config implements Serializable {
 		_instance = new Config();
 		new JCommander(_instance, args);
 		logger.info(
-				"Configuration: --inputFile {} --outputFile {} --runlocal {} --appID {}",
+				"Configuration: --inputFile {} --outputFile {} --runlocal {} --appID {} --stages {}  --executedStages {}",
 				new Object[] { _instance.inputFile, _instance.outputFile,
-						_instance.runLocal, _instance.applicationID });
+						_instance.runLocal, _instance.applicationID, _instance.buildStageGraph, _instance.filterExecutedStages });
 	}
 
 	@Parameter(names = { "-i", "--inputFile" })
@@ -49,5 +49,11 @@ public class Config implements Serializable {
 
 	@Parameter(names = { "-a", "--appID" })
 	public String applicationID;
+	
+	@Parameter(names = { "-s", "--stages" })
+	public boolean buildStageGraph = true;
+	
+	@Parameter(names = { "-es", "--executedStages" })
+	public boolean filterExecutedStages = false;
 
 }

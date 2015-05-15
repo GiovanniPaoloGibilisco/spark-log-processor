@@ -271,7 +271,7 @@ public class LoggerParser {
 			rddMap.put(rdd.getId(), rdd);
 			if (!dag.containsVertex(rdd))
 				dag.addVertex(rdd);
-			logger.info("Added RDD" + rdd.getId() + " to the graph");
+			logger.debug("Added RDD" + rdd.getId() + " to the graph");
 		}
 
 		// add all edges then
@@ -291,7 +291,7 @@ public class LoggerParser {
 						dag.getEdge(rddMap.get(source), rdd).getAttributes()
 								.put("cardinality", cardinality + 1);
 					}
-					logger.info("Added link from RDD " + source + "to RDD"
+					logger.debug("Added link from RDD " + source + "to RDD"
 							+ rdd.getId());
 				}
 		}
@@ -346,7 +346,7 @@ public class LoggerParser {
 		HashMap<Long, Stage> stageMap = new HashMap<Long, Stage>(stages.size());
 		for (Stage stage : stages) {
 			stageMap.put(stage.getId(), stage);
-			logger.info("Adding Stage " + stage.getId() + " to the graph");
+			logger.debug("Adding Stage " + stage.getId() + " to the graph");
 			dag.addVertex(stage);
 
 		}
@@ -355,7 +355,7 @@ public class LoggerParser {
 		for (Stage stage : stages) {
 			if (stage.getParentIDs() != null)
 				for (Long source : stage.getParentIDs()) {
-					logger.info("Adding link from Stage " + source + "to Stage"
+					logger.debug("Adding link from Stage " + source + "to Stage"
 							+ stage.getId());
 					dag.addEdge(stageMap.get(source), stage);
 				}

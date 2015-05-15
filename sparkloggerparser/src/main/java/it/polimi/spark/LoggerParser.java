@@ -102,8 +102,7 @@ public class LoggerParser {
 		}
 
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		// sqlContext = new org.apache.spark.sql.SQLContext(sc); To use SparkSQL
-		// dialect instead of Hive
+
 		sqlContext = new HiveContext(sc.sc());
 
 		if (hdfs.exists(new Path(config.outputFile)))
@@ -128,7 +127,7 @@ public class LoggerParser {
 
 		if (config.buildStageGraph) {
 			List<Stage> stages = extractStages(stageDetails);
-			// saveListToCSV(stageDetails, "StageDetails.csv");
+			saveListToCSV(stageDetails, "StageDetails.csv");
 			printStageGraph(stages);
 		}
 

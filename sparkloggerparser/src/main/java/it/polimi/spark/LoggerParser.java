@@ -128,14 +128,21 @@ public class LoggerParser {
 		if (config.buildStageGraph) {
 			List<Stage> stages = extractStages(stageDetails);
 			saveListToCSV(stageDetails, "StageDetails.csv");
-			printStageGraph(stages);
+			DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(stages);
+
+			// TODO: 1) transform the dag of stages into a 2 level dag of stages
+			// and jobs
+			// TODO: 2) connect the stages
+			// TODO: 3) fina way to identify common parts
+
+			printStageGraph(stageDag);
 		}
 
 		if (config.buildRDDGraph) {
 			// register the current dataframe as jobs table
 			stageDetails.registerTempTable("jobs");
 			DataFrame rddDetails = retrieveRDDInformation();
-//			rddDetails.show();
+			// rddDetails.show();
 			List<RDD> rdds = extractRDDs(rddDetails);
 			printRDDGraph(rdds);
 		}
@@ -173,6 +180,12 @@ public class LoggerParser {
 		return rdd;
 	}
 
+	/**
+	 * gets a list of stages from the dataframe
+	 * 
+	 * @param stageDetails
+	 * @return
+	 */
 	private static List<Stage> extractStages(DataFrame stageDetails) {
 		List<Stage> stages = new ArrayList<Stage>();
 		DataFrame table = null;
@@ -337,29 +350,8 @@ public class LoggerParser {
 	 * @param stages
 	 * @throws IOException
 	 */
-	private static void printStageGraph(List<Stage> stages) throws IOException {
-		DirectedAcyclicGraph<Stage, DefaultEdge> dag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
-				DefaultEdge.class);
-
-		// build an hashmap to look for stages quickly
-		// and add vertexes to the graph
-		HashMap<Long, Stage> stageMap = new HashMap<Long, Stage>(stages.size());
-		for (Stage stage : stages) {
-			stageMap.put(stage.getId(), stage);
-			logger.debug("Adding Stage " + stage.getId() + " to the graph");
-			dag.addVertex(stage);
-
-		}
-
-		// add all edges then
-		for (Stage stage : stages) {
-			if (stage.getParentIDs() != null)
-				for (Long source : stage.getParentIDs()) {
-					logger.debug("Adding link from Stage " + source + "to Stage"
-							+ stage.getId());
-					dag.addEdge(stageMap.get(source), stage);
-				}
-		}
+	private static void printStageGraph(
+			DirectedAcyclicGraph<Stage, DefaultEdge> dag) throws IOException {
 
 		DOTExporter<Stage, DefaultEdge> exporter = new DOTExporter<Stage, DefaultEdge>(
 				new VertexNameProvider<Stage>() {
@@ -588,6 +580,33 @@ public class LoggerParser {
 			br.write("\n");
 		}
 		br.close();
+	}
+
+	private static DirectedAcyclicGraph<Stage, DefaultEdge> buildStageDag(
+			List<Stage> stages) {
+		DirectedAcyclicGraph<Stage, DefaultEdge> dag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
+				DefaultEdge.class);
+
+		// build an hashmap to look for stages quickly
+		// and add vertexes to the graph
+		HashMap<Long, Stage> stageMap = new HashMap<Long, Stage>(stages.size());
+		for (Stage stage : stages) {
+			stageMap.put(stage.getId(), stage);
+			logger.debug("Adding Stage " + stage.getId() + " to the graph");
+			dag.addVertex(stage);
+
+		}
+
+		// add all edges then
+		for (Stage stage : stages) {
+			if (stage.getParentIDs() != null)
+				for (Long source : stage.getParentIDs()) {
+					logger.debug("Adding link from Stage " + source
+							+ "to Stage" + stage.getId());
+					dag.addEdge(stageMap.get(source), stage);
+				}
+		}
+		return dag;
 	}
 
 }

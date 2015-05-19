@@ -1,7 +1,10 @@
 package it.polimi.spark;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
@@ -49,6 +52,10 @@ public class LoggerParser {
 	static final String STAGE_LABEL = "Stage_";
 	static final String JOB_LABEL = "Job_";
 	static final String RDD_LABEL = "RDD_";
+	static final String APPLICATION_DAG_LABEL = "application-graph";
+	static final String JOB_PREFIX_LABEL = "job";
+	static final String JOB_SUFFIX_LABEL = "-graph";
+	static final String DOT_EXTENSION = ".dot";
 
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
@@ -63,12 +70,18 @@ public class LoggerParser {
 		Config.init(args);
 		config = Config.getInstance();
 
+		if (config.usage) {
+			config.usage();
+			return;
+		}
+
 		if (config.runLocal)
 			conf.setMaster("local[1]");
 
-		// either -i or -a has to be specified
+		// either -i or -app has to be specified
 		if (config.inputFile == null && config.applicationID == null) {
 			logger.info("No input file (-i option) or application id (-a option) has been specified. At least one of these options has to be provided");
+			config.usage();
 			return;
 		}
 
@@ -86,7 +99,7 @@ public class LoggerParser {
 			String eventLogDir = conf.get("spark.eventLog.dir", null).replace(
 					"file://", "");
 			if (eventLogDir == null) {
-				logger.info("Could not retireve the logging directory from the spark configuration, the property spark.eventLog.dir has to be set");
+				logger.info("Could not retireve the logging directory from the spark configuration, the property spark.eventLog.dir has to be set in the cluster configuration");
 				return;
 			}
 			config.inputFile = eventLogDir + "/" + config.applicationID;
@@ -105,8 +118,8 @@ public class LoggerParser {
 
 		sqlContext = new HiveContext(sc.sc());
 
-		if (hdfs.exists(new Path(config.outputFile)))
-			hdfs.delete(new Path(config.outputFile), true);
+		if (hdfs.exists(new Path(config.outputFolder)))
+			hdfs.delete(new Path(config.outputFolder), true);
 
 		// load the logs
 		DataFrame logsframe = sqlContext.jsonFile(config.inputFile);
@@ -115,7 +128,6 @@ public class LoggerParser {
 		// register the main table with all the logs as "events"
 		logsframe.registerTempTable("events");
 
-		DataFrame stageDetails = retrieveStageInformation();
 		// stageDetails.show((int) stageDetails.count());
 
 		// save CSV with performance information
@@ -125,18 +137,37 @@ public class LoggerParser {
 			saveListToCSV(taskDetails, "TaskDetails.csv");
 		}
 
-		if (config.buildStageGraph) {
-			List<Stage> stages = extractStages(stageDetails);
-			saveListToCSV(stageDetails, "StageDetails.csv");
-			DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(stages);
+		DataFrame stageDetails = null;
+		List<Stage> stages = null;
 
+		if (config.ApplicationDAG || config.jobDAGS) {
+			stageDetails = retrieveStageInformation();
+			stages = extractStages(stageDetails);
+			saveListToCSV(stageDetails, "StageDetails.csv");
+		}
+
+		if (config.ApplicationDAG) {
+			DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(stages);
+			// DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>,
+			// DefaultEdge> applicationDag = buildApplicationDag(stages);
 			// TODO: 1) transform the dag of stages into a 2 level dag of stages
 			// and jobs
 			// TODO: 2) connect the stages
-			// TODO: 3) fina way to identify common parts
-
+			// TODO: 3) find way to identify common parts
 			printStageGraph(stageDag);
 		}
+
+		int numberOfJobs = 0;
+		if (config.jobDAGS) {
+			numberOfJobs = getNumberOfJobs(stageDetails);
+			for (int i = 0; i <= numberOfJobs; i++) {
+				DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(
+						stages, i);
+				printStageGraph(stageDag, i);
+			}
+		}
+
+		// if(config.buildJobDags)
 
 		if (config.buildRDDGraph) {
 			// register the current dataframe as jobs table
@@ -146,9 +177,59 @@ public class LoggerParser {
 			List<RDD> rdds = extractRDDs(rddDetails);
 			printRDDGraph(rdds);
 		}
+
+		// build images with dotty (if available)
+		// check if dotty is available in the path
+		try {
+			if (DottyRenderer.isDottyAvailable() && filesAreLocal()) {
+				if (config.ApplicationDAG) {
+					new DottyRenderer(APPLICATION_DAG_LABEL + DOT_EXTENSION,
+							APPLICATION_DAG_LABEL, "png").start();
+
+				}
+				if (config.jobDAGS) {
+					for (int i = 0; i <= numberOfJobs; i++)
+						new DottyRenderer(JOB_PREFIX_LABEL + i
+								+ JOB_SUFFIX_LABEL + DOT_EXTENSION,
+								JOB_PREFIX_LABEL + i + JOB_SUFFIX_LABEL, "png")
+								.start();
+				}
+			} else {
+				logger.info("could not find dot, DAGs have been exported but mages have not been rendered");
+			}
+		} catch (IOException e) {
+			logger.info("could not run dotty, DAGs have been exported but mages have not been rendered");
+		}
+
 		// clean up the mess
 		hdfs.close();
 		sc.close();
+	}
+
+	/**
+	 * check if thwe output folder is in the local file system
+	 * 
+	 * @return
+	 */
+	private static boolean filesAreLocal() {
+		return !config.outputFolder.startsWith("hdfs");
+
+	}
+
+	/**
+	 * gets the number of jobs in the application using the Job ID column
+	 * 
+	 * 
+	 * @param stageDetails
+	 * @return
+	 */
+	private static int getNumberOfJobs(DataFrame stageDetails) {
+		int max = 0;
+		for (Row r : stageDetails.select("Job ID").collect())
+			if ((int) r.getLong(0) > max)
+				max = (int) r.getLong(0);
+		logger.info(max + " Jobs found");
+		return max;
 	}
 
 	/**
@@ -221,6 +302,7 @@ public class LoggerParser {
 
 		}
 
+		logger.info(stages.size() + "Stagess found");
 		return stages;
 	}
 
@@ -276,6 +358,8 @@ public class LoggerParser {
 
 		DirectedAcyclicGraph<RDD, DefaultEdge> dag = new DirectedAcyclicGraph<RDD, DefaultEdge>(
 				DefaultEdge.class);
+
+		logger.info(rdds.size() + "RDDs found");
 
 		// build an hashmap to look for rdds quickly
 		// add vertexes to the graph
@@ -335,7 +419,7 @@ public class LoggerParser {
 					}
 				});
 
-		OutputStream os = hdfs.create(new Path(config.outputFile,
+		OutputStream os = hdfs.create(new Path(config.outputFolder,
 				"rdd-graph.dot"));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
@@ -344,14 +428,28 @@ public class LoggerParser {
 	}
 
 	/**
-	 * builds the graph with stages dependencies and saves it into a .dot file
-	 * that can be used for visualization, starting from a list of stages
+	 * convenience method to print the entire application dag
 	 * 
 	 * @param stages
 	 * @throws IOException
 	 */
 	private static void printStageGraph(
 			DirectedAcyclicGraph<Stage, DefaultEdge> dag) throws IOException {
+		printStageGraph(dag, -1);
+
+	}
+
+	/**
+	 * Export the Dag in dotty the job number is used to name the dot file, if
+	 * it is -1 the file is names application-graph
+	 * 
+	 * @param dag
+	 * @param jobNumber
+	 * @throws IOException
+	 */
+	private static void printStageGraph(
+			DirectedAcyclicGraph<Stage, DefaultEdge> dag, int jobNumber)
+			throws IOException {
 
 		DOTExporter<Stage, DefaultEdge> exporter = new DOTExporter<Stage, DefaultEdge>(
 				new VertexNameProvider<Stage>() {
@@ -392,13 +490,18 @@ public class LoggerParser {
 						return map;
 					}
 				});
-
-		OutputStream os = hdfs.create(new Path(config.outputFile,
-				"stage-graph.dot"));
+		String filename = null;
+		if (jobNumber < 0)
+			filename = APPLICATION_DAG_LABEL + DOT_EXTENSION;
+		else
+			filename = JOB_PREFIX_LABEL + jobNumber + JOB_SUFFIX_LABEL
+					+ DOT_EXTENSION;
+		OutputStream os = hdfs.create(new Path(config.outputFolder, filename));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
 		exporter.export(br, dag);
 		br.close();
+
 	}
 
 	/**
@@ -553,7 +656,7 @@ public class LoggerParser {
 	private static void saveListToCSV(DataFrame data, String fileName)
 			throws IOException, UnsupportedEncodingException {
 		List<Row> table = data.toJavaRDD().collect();
-		OutputStream os = hdfs.create(new Path(config.outputFile, fileName));
+		OutputStream os = hdfs.create(new Path(config.outputFolder, fileName));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
 		// the schema first
@@ -582,6 +685,12 @@ public class LoggerParser {
 		br.close();
 	}
 
+	/**
+	 * Builds a DAG using all the stages in the provided list.
+	 * 
+	 * @param stages
+	 * @return
+	 */
 	private static DirectedAcyclicGraph<Stage, DefaultEdge> buildStageDag(
 			List<Stage> stages) {
 		DirectedAcyclicGraph<Stage, DefaultEdge> dag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
@@ -607,6 +716,23 @@ public class LoggerParser {
 				}
 		}
 		return dag;
+	}
+
+	/**
+	 * builds a DAG using only the stages in the specified job, selected by
+	 * those provided in the list
+	 * 
+	 * @param stages
+	 * @param stageNumber
+	 * @return
+	 */
+	private static DirectedAcyclicGraph<Stage, DefaultEdge> buildStageDag(
+			List<Stage> stages, int jobNumber) {
+		List<Stage> jobStages = new ArrayList<Stage>();
+		for (Stage s : stages)
+			if ((int) s.getJobId() == jobNumber)
+				jobStages.add(s);
+		return buildStageDag(jobStages);
 	}
 
 }

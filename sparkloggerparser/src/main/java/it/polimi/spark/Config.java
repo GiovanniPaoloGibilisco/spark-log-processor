@@ -16,6 +16,7 @@ public class Config implements Serializable {
 	private static final long serialVersionUID = 5087417577620830639L;
 
 	private static Config _instance;
+	private static JCommander commander;
 
 	static final Logger logger = LoggerFactory.getLogger(Config.class);
 
@@ -31,36 +32,47 @@ public class Config implements Serializable {
 
 	public static void init(String[] args) {
 		_instance = new Config();
-		new JCommander(_instance, args);
+		commander = new JCommander(_instance, args);
 		logger.info(
-				"Configuration: --inputFile {} --outputFile {} --runlocal {} --appID {} --stages {}  --executedStages {} --rdds {} --task {}",
-				new Object[] { _instance.inputFile, _instance.outputFile,
-						_instance.runLocal, _instance.applicationID, _instance.buildStageGraph, _instance.filterExecutedStages, _instance.buildRDDGraph, _instance.task});
+				"Configuration: --inputFile {} --outputFolder {} --runlocal {} --appID {} --applicationDAG {} --jobDAGs {} --executedStages {} --rdds {} --task {} -u --usage {}",
+				new Object[] { _instance.inputFile, _instance.outputFolder,
+						_instance.runLocal, _instance.applicationID, _instance.ApplicationDAG, _instance.jobDAGS ,_instance.filterExecutedStages, _instance.buildRDDGraph, _instance.task, _instance.usage});
 	}
 
-	@Parameter(names = { "-i", "--inputFile" })
+	@Parameter(names = { "-i", "--inputFile" }, description = "Path to the input file containing the logs, the file must can be in the local file system or on hdfs. Either -i or -app has to be specified")
 	public String inputFile;
 
-	@Parameter(names = { "-o", "--outputFile" }, required = true)
-	public String outputFile;
+	@Parameter(names = { "-o", "--outputFolder" }, required = true, description = "output folder to store the DAGs and csv files")
+	public String outputFolder;
 
-	@Parameter(names = { "-l", "--runLocal" })
+	@Parameter(names = { "-l", "--runLocal" }, description ="Use to run the tool in the local mode")
 	public boolean runLocal = false;
 
-	@Parameter(names = { "-a", "--appID" })
+	@Parameter(names = { "-app", "--appID" }, description = "Id of the application to analyze. If this parameter is specified (istead of using -i) the tool will look for log files using the configuration of the cluster")
 	public String applicationID;
 	
-	@Parameter(names = { "-s", "--stages" })
-	public boolean buildStageGraph = true;
+	@Parameter(names = { "-a", "--applicationDAG" }, description = "build a single DAG with all the stages created by the application")
+	public boolean ApplicationDAG = false;
 	
-	@Parameter(names = { "-r", "--rdds" })
+	@Parameter(names = { "-r", "--rdds" }, description ="build a DAG of all the RDDs created by the application")
 	public boolean buildRDDGraph = false;
-	
 
-	@Parameter(names = { "-t", "--task" })
+	@Parameter(names = { "-t", "--task" }, description ="export performance information of tasks in csv")
 	public boolean task = false;
 	
-	@Parameter(names = { "-es", "--executedStages" })
+	@Parameter(names = { "-j", "--jobDAGs" }, description ="build a separate DAG for each job")
+	public boolean jobDAGS = false;
+	
+	@Parameter(names = { "-es", "--executedStages" }, description ="in the creation of DAGs (either with -a or -j) highlight stages that have been executed")
 	public boolean filterExecutedStages = false;
-
+	
+	@Parameter(names = { "-u", "--usage" }, description = "print this information screen")
+	public boolean usage = false;
+	
+	public void usage(){
+		StringBuilder builder = new StringBuilder();
+		commander.usage(builder);
+		logger.info(builder.toString());
+	}
+	
 }

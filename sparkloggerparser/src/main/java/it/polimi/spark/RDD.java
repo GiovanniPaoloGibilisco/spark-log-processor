@@ -4,13 +4,20 @@ import java.util.List;
 
 public class RDD {
 
-	private Long id;
+	private long id;
 	private String name;
 	private List<Long> parentIDs;
-	private Long partitions;
-	private Long scopeID;
+	private long partitions;
+	private long scopeID;
 	private String scopeName;
-	private Long stageID;
+	private long stageID;
+	private boolean useDisk;
+	private boolean useMemory;
+	private boolean useExternalBlockStore;
+	private boolean deserialized;
+	private long replication;	
+	
+
 
 	/**
 	 * @param id
@@ -20,9 +27,16 @@ public class RDD {
 	 * @param scopeID
 	 * @param scopeName
 	 * @param stageID
+	 * @param useDisk
+	 * @param useMemory
+	 * @param useExternalBlockStore
+	 * @param deserialized
+	 * @param replication
 	 */
-	public RDD(Long id, String name, List<Long> parentIDs, Long partitions,
-			Long scopeID, String scopeName, Long stageID) {
+	public RDD(long id, String name, List<Long> parentIDs, long partitions,
+			long scopeID, String scopeName, long stageID, boolean useDisk,
+			boolean useMemory, boolean useExternalBlockStore,
+			boolean deserialized, long replication) {
 		super();
 		this.id = id;
 		this.name = name;
@@ -31,13 +45,38 @@ public class RDD {
 		this.scopeID = scopeID;
 		this.scopeName = scopeName;
 		this.stageID = stageID;
+		this.useDisk = useDisk;
+		this.useMemory = useMemory;
+		this.useExternalBlockStore = useExternalBlockStore;
+		this.deserialized = deserialized;
+		this.replication = replication;
 	}
 
-	public Long getStageID() {
+	public boolean isUseDisk() {
+		return useDisk;
+	}
+
+	public boolean isUseMemory() {
+		return useMemory;
+	}
+
+	public boolean isUseExternalBlockStore() {
+		return useExternalBlockStore;
+	}
+
+	public boolean isDeserialized() {
+		return deserialized;
+	}
+
+	public long getReplication() {
+		return replication;
+	}
+
+	public long getStageID() {
 		return stageID;
 	}
 
-	public Long getId() {
+	public long getId() {
 		return id;
 	}
 
@@ -49,11 +88,11 @@ public class RDD {
 		return parentIDs;
 	}
 
-	public Long getPartitions() {
+	public long getPartitions() {
 		return partitions;
 	}
 
-	public Long getScopeID() {
+	public long getScopeID() {
 		return scopeID;
 	}
 

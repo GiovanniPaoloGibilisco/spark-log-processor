@@ -1,10 +1,7 @@
 package it.polimi.spark;
 
-import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
@@ -54,7 +51,9 @@ public class LoggerParser {
 	static final String RDD_LABEL = "RDD_";
 	static final String APPLICATION_DAG_LABEL = "application-graph";
 	static final String JOB_PREFIX_LABEL = "job";
-	static final String JOB_SUFFIX_LABEL = "-graph";
+	static final String GRAPH_LABEL = "-graph";
+	static final String APPLICATION_RDD_LABEL = "application-rdd";
+	static final String RDD_STAGE_PREFIX_LABEL = "rdd-stage";
 	static final String DOT_EXTENSION = ".dot";
 
 	public static void main(String[] args) throws IOException,
@@ -148,12 +147,7 @@ public class LoggerParser {
 
 		if (config.ApplicationDAG) {
 			DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(stages);
-			// DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>,
-			// DefaultEdge> applicationDag = buildApplicationDag(stages);
-			// TODO: 1) transform the dag of stages into a 2 level dag of stages
-			// and jobs
-			// TODO: 2) connect the stages
-			// TODO: 3) find way to identify common parts
+
 			printStageGraph(stageDag);
 		}
 
@@ -174,8 +168,16 @@ public class LoggerParser {
 			stageDetails.registerTempTable("jobs");
 			DataFrame rddDetails = retrieveRDDInformation();
 			// rddDetails.show();
+			saveListToCSV(rddDetails, "rdd.csv");
 			List<RDD> rdds = extractRDDs(rddDetails);
-			printRDDGraph(rdds);
+
+			int numberOfStages = getNumberOfStages(stageDetails);
+			for (int i = 0; i <= numberOfStages; i++) {
+				DirectedAcyclicGraph<RDD, DefaultEdge> rddDag = buildRDDDag(
+						rdds, i);
+				printRDDGraph(rddDag, i);
+			}
+
 		}
 
 		// build images with dotty (if available)
@@ -189,10 +191,9 @@ public class LoggerParser {
 				}
 				if (config.jobDAGS) {
 					for (int i = 0; i <= numberOfJobs; i++)
-						new DottyRenderer(JOB_PREFIX_LABEL + i
-								+ JOB_SUFFIX_LABEL + DOT_EXTENSION,
-								JOB_PREFIX_LABEL + i + JOB_SUFFIX_LABEL, "png")
-								.start();
+						new DottyRenderer(JOB_PREFIX_LABEL + i + GRAPH_LABEL
+								+ DOT_EXTENSION, JOB_PREFIX_LABEL + i
+								+ GRAPH_LABEL, "png").start();
 				}
 			} else {
 				logger.info("could not find dot, DAGs have been exported but mages have not been rendered");
@@ -230,6 +231,16 @@ public class LoggerParser {
 				max = (int) r.getLong(0);
 		logger.info(max + " Jobs found");
 		return max;
+	}
+
+	/**
+	 * retrieves the number of stages (counting what's in the dataframe)
+	 * 
+	 * @param stageDetails
+	 * @return
+	 */
+	private static int getNumberOfStages(DataFrame stageDetails) {
+		return (int) stageDetails.count();
 	}
 
 	/**
@@ -314,8 +325,11 @@ public class LoggerParser {
 	 */
 	private static List<RDD> extractRDDs(DataFrame rddDetails) {
 		List<RDD> rdds = new ArrayList<RDD>();
+
 		DataFrame table = rddDetails.select("RDD ID", "Parent IDs", "Name",
-				"Scope", "Number of Partitions", "Stage ID").distinct();
+				"Scope", "Number of Partitions", "Stage ID", "Use Disk",
+				"Use Memory", "Use ExternalBlockStore", "Deserialized",
+				"Replication").distinct();
 		for (Row row : table.collectAsList()) {
 			List<Long> parentList = null;
 			if (row.get(1) instanceof scala.collection.immutable.List<?>)
@@ -340,58 +354,34 @@ public class LoggerParser {
 			}
 
 			rdds.add(new RDD(row.getLong(0), row.getString(2), parentList,
-					scopeID, row.getLong(4), scopeName, row.getLong(5)));
+					scopeID, row.getLong(4), scopeName, row.getLong(5), row
+							.getBoolean(6), row.getBoolean(7), row
+							.getBoolean(8), row.getBoolean(9), row.getLong(10)));
 
 		}
 		return rdds;
 	}
 
 	/**
-	 * builds the graph with RDD dependencies and saves it into a .dot file that
-	 * can be used for visualization, starting from a list of RDDs, This
-	 * information include RDD ID, and names
+	 * convenience method to print all the rdd graph
 	 * 
-	 * @param rdds
+	 * @param dag
 	 * @throws IOException
 	 */
-	private static void printRDDGraph(List<RDD> rdds) throws IOException {
+	private static void printRDDGraph(DirectedAcyclicGraph<RDD, DefaultEdge> dag)
+			throws IOException {
+		printRDDGraph(dag, -1);
+	}
 
-		DirectedAcyclicGraph<RDD, DefaultEdge> dag = new DirectedAcyclicGraph<RDD, DefaultEdge>(
-				DefaultEdge.class);
-
-		logger.info(rdds.size() + "RDDs found");
-
-		// build an hashmap to look for rdds quickly
-		// add vertexes to the graph
-		HashMap<Long, RDD> rddMap = new HashMap<Long, RDD>(rdds.size());
-		for (RDD rdd : rdds) {
-			rddMap.put(rdd.getId(), rdd);
-			if (!dag.containsVertex(rdd))
-				dag.addVertex(rdd);
-			logger.debug("Added RDD" + rdd.getId() + " to the graph");
-		}
-
-		// add all edges then
-		for (RDD rdd : rdds) {
-			if (rdd.getParentIDs() != null)
-				for (Long source : rdd.getParentIDs()) {
-					if (!dag.containsEdge(rddMap.get(source), rdd)) {
-						dag.addEdge(rddMap.get(source), rdd);
-						Map<String, Integer> map = new LinkedHashMap<>();
-						map.put("cardinality", 1);
-						dag.getEdge(rddMap.get(source), rdd).setAttributes(
-								new AttributeMap(map));
-					} else {
-						int cardinality = (int) dag
-								.getEdge(rddMap.get(source), rdd)
-								.getAttributes().get("cardinality");
-						dag.getEdge(rddMap.get(source), rdd).getAttributes()
-								.put("cardinality", cardinality + 1);
-					}
-					logger.debug("Added link from RDD " + source + "to RDD"
-							+ rdd.getId());
-				}
-		}
+	/**
+	 * saves the dag it into a .dot file that can be used for visualization
+	 * 
+	 * @param dag
+	 * @throws IOException
+	 */
+	private static void printRDDGraph(
+			DirectedAcyclicGraph<RDD, DefaultEdge> dag, int stage)
+			throws IOException {
 
 		DOTExporter<RDD, DefaultEdge> exporter = new DOTExporter<RDD, DefaultEdge>(
 				new VertexNameProvider<RDD>() {
@@ -417,10 +407,27 @@ public class LoggerParser {
 
 						return null;
 					}
-				});
+				}, new ComponentAttributeProvider<RDD>() {
 
-		OutputStream os = hdfs.create(new Path(config.outputFolder,
-				"rdd-graph.dot"));
+					@Override
+					public Map<String, String> getComponentAttributes(RDD rdd) {
+						Map<String, String> map = new LinkedHashMap<String, String>();
+						if (rdd.isUseMemory()) {
+							map.put("style", "filled");
+							map.put("fillcolor", "red");
+						}
+						return map;
+					}
+				}, null);
+
+		String filename = null;
+		if (stage < 0)
+			filename = APPLICATION_RDD_LABEL + DOT_EXTENSION;
+		else
+			filename = RDD_STAGE_PREFIX_LABEL + stage + GRAPH_LABEL
+					+ DOT_EXTENSION;
+
+		OutputStream os = hdfs.create(new Path(config.outputFolder, filename));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
 		exporter.export(br, dag);
@@ -428,9 +435,73 @@ public class LoggerParser {
 	}
 
 	/**
+	 * shorthand to build the dag over all the stages
+	 * 
+	 * @param rdds
+	 * @return
+	 */
+	private static DirectedAcyclicGraph<RDD, DefaultEdge> buildRDDDag(
+			List<RDD> rdds) {
+		return buildRDDDag(rdds, -1);
+	}
+
+	/**
+	 * build the dag of rdds of one stage
+	 * 
+	 * @param rdds
+	 * @return
+	 */
+	private static DirectedAcyclicGraph<RDD, DefaultEdge> buildRDDDag(
+			List<RDD> rdds, int stage) {
+
+		DirectedAcyclicGraph<RDD, DefaultEdge> dag = new DirectedAcyclicGraph<RDD, DefaultEdge>(
+				DefaultEdge.class);
+
+		// build an hashmap to look for rdds quickly
+		// add vertexes to the graph
+		HashMap<Long, RDD> rddMap = new HashMap<Long, RDD>(rdds.size());
+		for (RDD rdd : rdds) {
+			if (rdd.getStageID() == stage) {
+				rddMap.put(rdd.getId(), rdd);
+				if (!dag.containsVertex(rdd))
+					dag.addVertex(rdd);
+				logger.debug("Added RDD" + rdd.getId()
+						+ " to the graph of stage " + stage);
+			}
+		}
+
+		// add all edges then
+		// note that we are ingoring edges going to other stages
+		for (RDD rdd : dag.vertexSet()) {
+			if (rdd.getParentIDs() != null)
+				for (Long source : rdd.getParentIDs()) {
+					if (dag.vertexSet().contains(rddMap.get(source))) {
+						logger.debug("Adding link from RDD " + source
+								+ "to RDD" + rdd.getId());
+						RDD sourceRdd = rddMap.get(source);
+						if (!dag.containsEdge(sourceRdd, rdd)) {
+							dag.addEdge(sourceRdd, rdd);
+							Map<String, Integer> map = new LinkedHashMap<>();
+							map.put("cardinality", 1);
+							dag.getEdge(sourceRdd, rdd).setAttributes(
+									new AttributeMap(map));
+						} else {
+							int cardinality = (int) dag.getEdge(sourceRdd, rdd)
+									.getAttributes().get("cardinality");
+							dag.getEdge(sourceRdd, rdd).getAttributes()
+									.put("cardinality", cardinality + 1);
+						}
+
+					}
+				}
+		}
+		return dag;
+	}
+
+	/**
 	 * convenience method to print the entire application dag
 	 * 
-	 * @param stages
+	 * @param dag
 	 * @throws IOException
 	 */
 	private static void printStageGraph(
@@ -494,7 +565,7 @@ public class LoggerParser {
 		if (jobNumber < 0)
 			filename = APPLICATION_DAG_LABEL + DOT_EXTENSION;
 		else
-			filename = JOB_PREFIX_LABEL + jobNumber + JOB_SUFFIX_LABEL
+			filename = JOB_PREFIX_LABEL + jobNumber + GRAPH_LABEL
 					+ DOT_EXTENSION;
 		OutputStream os = hdfs.create(new Path(config.outputFolder, filename));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
@@ -556,9 +627,9 @@ public class LoggerParser {
 	}
 
 	/**
-	 * Initialized the extendedJobStartInfos by selecting all the events that
-	 * end with "Jobstart" label and adding two columns containing the m inimum
-	 * and maximum stage id numbers for the job (operates modifying the "jobs"
+	 * Initialize the extendedJobStartInfos by selecting all the events that end
+	 * with "Jobstart" label and adding two columns containing the m inimum and
+	 * maximum stage id numbers for the job (operates modifying the "jobs"
 	 * table)
 	 */
 	private static void retrieveInitialAndFinalStage() {
@@ -683,6 +754,61 @@ public class LoggerParser {
 			br.write("\n");
 		}
 		br.close();
+	}
+
+	/**
+	 * Builds a 2 level DAG where the fist level is composed by jobs and the
+	 * second level is composed by stages (not sure if this is really useful..)
+	 * 
+	 * @param stages
+	 * @return
+	 */
+	@Deprecated
+	private static DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>, DefaultEdge> buildApplicationDag(
+			List<Stage> stages) {
+		DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>, DefaultEdge> dag = new DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>, DefaultEdge>(
+				DefaultEdge.class);
+
+		// build an hashmap to look for stages quickly
+		// and add vertexes to the graph
+		Map<Long, HashMap<Long, Stage>> jobStageMap = new HashMap<Long, HashMap<Long, Stage>>();
+		Map<Long, DirectedAcyclicGraph<Stage, DefaultEdge>> jobDagMap = new HashMap<Long, DirectedAcyclicGraph<Stage, DefaultEdge>>();
+		for (Stage stage : stages) {
+			if (!jobStageMap.containsKey(stage.getJobId()))
+				jobStageMap.put(stage.getJobId(), new HashMap<Long, Stage>());
+			jobStageMap.get(stage.getJobId()).put(stage.getId(), stage);
+		}
+
+		for (Long job : jobStageMap.keySet()) {
+			logger.debug("Adding job " + job + " to the graph");
+			DirectedAcyclicGraph<Stage, DefaultEdge> jobDag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
+					DefaultEdge.class);
+			jobDagMap.put(job, jobDag);
+			// add vertixes to the job dag
+			for (Long stageId : jobStageMap.get(job).keySet()) {
+				logger.debug("Adding Stage " + stageId + " of Job " + job
+						+ " to the graph");
+				jobDag.addVertex(jobStageMap.get(job).get(stageId));
+			}
+
+			// add edges to the jobdag
+			for (Long stageId : jobStageMap.get(job).keySet()) {
+				Stage stage = jobStageMap.get(job).get(stageId);
+				if (stage.getParentIDs() != null)
+					for (Long source : stage.getParentIDs()) {
+						logger.debug("Adding link from Stage " + source
+								+ "to Stage" + stage.getId());
+						jobDag.addEdge(jobStageMap.get(job).get(source), stage);
+					}
+			}
+			dag.addVertex(jobDag);
+
+			// connecte linearly the upper level
+			if (jobStageMap.containsKey(job - 1.0))
+				dag.addEdge(jobDagMap.get(job - 1.0), jobDag);
+		}
+
+		return dag;
 	}
 
 	/**

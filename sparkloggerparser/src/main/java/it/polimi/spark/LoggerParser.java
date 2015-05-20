@@ -53,8 +53,10 @@ public class LoggerParser {
 	static final String JOB_PREFIX_LABEL = "job";
 	static final String GRAPH_LABEL = "-graph";
 	static final String APPLICATION_RDD_LABEL = "application-rdd";
-	static final String RDD_STAGE_PREFIX_LABEL = "rdd-stage";
+	static final String RDD_STAGE_PREFIX_LABEL = "rdd-";
 	static final String DOT_EXTENSION = ".dot";
+	static Map<Integer, ArrayList<Integer>> job2StagesMap = new HashMap<Integer, ArrayList<Integer>>();
+	static Map<Integer, Integer> stage2jobMap = new HashMap<Integer, Integer>();
 
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
@@ -138,22 +140,36 @@ public class LoggerParser {
 
 		DataFrame stageDetails = null;
 		List<Stage> stages = null;
+		int numberOfJobs = 0;
+		int numberOfStages = 0;
 
-		if (config.ApplicationDAG || config.jobDAGS) {
+		// I could also remove the if, almost every functionality require to
+		// parse stage details
+		if (config.ApplicationDAG || config.jobDAGS
+				|| config.buildStageRDDGraph || config.buildJobRDDGraph) {
 			stageDetails = retrieveStageInformation();
 			stages = extractStages(stageDetails);
 			saveListToCSV(stageDetails, "StageDetails.csv");
+
+			// initialize the maps used later on
+			for (Stage s : stages) {
+				stage2jobMap.put(s.getId(), s.getJobId());
+				if (!job2StagesMap.containsKey(s.getJobId()))
+					job2StagesMap.put(s.getJobId(), new ArrayList<Integer>());
+				job2StagesMap.get(s.getJobId()).add(s.getId());
+			}
+			// initialize stage and job number counters
+			numberOfJobs = getNumberOfJobs(stageDetails);
+			numberOfStages = getNumberOfStages(stageDetails);
+
 		}
 
 		if (config.ApplicationDAG) {
 			DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(stages);
-
 			printStageGraph(stageDag);
 		}
 
-		int numberOfJobs = 0;
 		if (config.jobDAGS) {
-			numberOfJobs = getNumberOfJobs(stageDetails);
 			for (int i = 0; i <= numberOfJobs; i++) {
 				DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(
 						stages, i);
@@ -161,21 +177,29 @@ public class LoggerParser {
 			}
 		}
 
-		// if(config.buildJobDags)
-
-		if (config.buildRDDGraph) {
-			// register the current dataframe as jobs table
+		// This part takes care of functionalities related to rdds
+		List<RDD> rdds = null;
+		if (config.buildJobRDDGraph || config.buildStageRDDGraph) {
 			stageDetails.registerTempTable("jobs");
 			DataFrame rddDetails = retrieveRDDInformation();
-			// rddDetails.show();
 			saveListToCSV(rddDetails, "rdd.csv");
-			List<RDD> rdds = extractRDDs(rddDetails);
+			rdds = extractRDDs(rddDetails);
+		}
 
-			int numberOfStages = getNumberOfStages(stageDetails);
+		if (config.buildJobRDDGraph) {
+			for (int i = 0; i <= numberOfJobs; i++) {
+				DirectedAcyclicGraph<RDD, DefaultEdge> rddDag = buildRDDDag(
+						rdds, i, -1);
+				printRDDGraph(rddDag, i, -1);
+			}
+		}
+
+		if (config.buildStageRDDGraph) {
+			// register the current dataframe as jobs table
 			for (int i = 0; i <= numberOfStages; i++) {
 				DirectedAcyclicGraph<RDD, DefaultEdge> rddDag = buildRDDDag(
-						rdds, i);
-				printRDDGraph(rddDag, i);
+						rdds, -1, i);
+				printRDDGraph(rddDag, stage2jobMap.get(i).intValue(), i);
 			}
 
 		}
@@ -218,13 +242,20 @@ public class LoggerParser {
 	}
 
 	/**
-	 * gets the number of jobs in the application using the Job ID column
+	 * gets the number of jobs in the application, if the job2stagesMap has
+	 * already been initialzied it is used, otherwise the Job ID column in the
+	 * datafram is used
 	 * 
 	 * 
 	 * @param stageDetails
 	 * @return
 	 */
 	private static int getNumberOfJobs(DataFrame stageDetails) {
+		// make ues of the hashmap if it has been filled
+		if (!job2StagesMap.isEmpty())
+			return job2StagesMap.size() - 1;
+
+		// query the dataframe if not
 		int max = 0;
 		for (Row r : stageDetails.select("Job ID").collect())
 			if ((int) r.getLong(0) > max)
@@ -234,12 +265,15 @@ public class LoggerParser {
 	}
 
 	/**
-	 * retrieves the number of stages (counting what's in the dataframe)
+	 * retrieves the number of stages if the stage2job map has been initialized
+	 * it is used, otherwise the number of rows in the dataframe is used
 	 * 
 	 * @param stageDetails
 	 * @return
 	 */
 	private static int getNumberOfStages(DataFrame stageDetails) {
+		if (!stage2jobMap.isEmpty())
+			return stage2jobMap.size() - 1;
 		return (int) stageDetails.count();
 	}
 
@@ -289,25 +323,30 @@ public class LoggerParser {
 					"Stage Name").orderBy("Job ID", "Stage ID");
 
 		for (Row row : table.distinct().collectAsList()) {
-			List<Long> parentList = null;
+			List<Long> tmpParentList = null;
+			List<Integer> parentList = null;
 			if (row.get(2) instanceof scala.collection.immutable.List<?>)
-				parentList = JavaConversions.asJavaList((Seq<Long>) row.get(2));
-			else if (row.get(2) instanceof ArrayBuffer<?>)
-				parentList = JavaConversions.asJavaList((ArrayBuffer<Long>) row
+				tmpParentList = JavaConversions.asJavaList((Seq<Long>) row
 						.get(2));
+			else if (row.get(2) instanceof ArrayBuffer<?>)
+				tmpParentList = JavaConversions
+						.asJavaList((ArrayBuffer<Long>) row.get(2));
 			else {
 				logger.warn("Could not parse Stage Parent IDs Serialization:"
 						+ row.get(2).toString() + " class: "
 						+ row.get(2).getClass() + " Object: " + row.get(2));
 			}
 
+			parentList = new ArrayList<Integer>();
+			for (Long parent : tmpParentList)
+				parentList.add(parent.intValue());
 			Stage stage = null;
 			if (config.filterExecutedStages)
-				stage = new Stage(row.getLong(0), row.getLong(1), parentList,
-						row.getString(3), row.getBoolean(4));
+				stage = new Stage((int) row.getLong(0), (int) row.getLong(1),
+						parentList, row.getString(3), row.getBoolean(4));
 			else
-				stage = new Stage(row.getLong(0), row.getLong(1), parentList,
-						row.getString(3), false);
+				stage = new Stage((int) row.getLong(0), (int) row.getLong(1),
+						parentList, row.getString(3), false);
 
 			stages.add(stage);
 
@@ -331,32 +370,36 @@ public class LoggerParser {
 				"Use Memory", "Use ExternalBlockStore", "Deserialized",
 				"Replication").distinct();
 		for (Row row : table.collectAsList()) {
-			List<Long> parentList = null;
+			List<Long> tmpParentList = null;
+			List<Integer> parentList = null;
 			if (row.get(1) instanceof scala.collection.immutable.List<?>)
-				parentList = JavaConversions.asJavaList((Seq<Long>) row.get(1));
-			else if (row.get(1) instanceof ArrayBuffer<?>)
-				parentList = JavaConversions.asJavaList((ArrayBuffer<Long>) row
+				tmpParentList = JavaConversions.asJavaList((Seq<Long>) row
 						.get(1));
+			else if (row.get(1) instanceof ArrayBuffer<?>)
+				tmpParentList = JavaConversions
+						.asJavaList((ArrayBuffer<Long>) row.get(1));
 			else {
 				logger.warn("Could not parse RDD PArent IDs Serialization:"
 						+ row.get(1).toString() + " class: "
 						+ row.get(1).getClass() + " Object: " + row.get(1));
 			}
-
-			long scopeID = 0;
+			parentList = new ArrayList<Integer>();
+			for (Long parent : tmpParentList)
+				parentList.add(parent.intValue());
+			int scopeID = 0;
 			String scopeName = null;
 			if (row.get(3) != null && !row.getString(3).isEmpty()
 					&& row.getString(3).startsWith("{")) {
 				JsonObject scopeObject = new JsonParser().parse(
 						row.getString(3)).getAsJsonObject();
-				scopeID = scopeObject.get("id").getAsLong();
+				scopeID = scopeObject.get("id").getAsInt();
 				scopeName = scopeObject.get("name").getAsString();
 			}
 
-			rdds.add(new RDD(row.getLong(0), row.getString(2), parentList,
-					scopeID, row.getLong(4), scopeName, row.getLong(5), row
-							.getBoolean(6), row.getBoolean(7), row
-							.getBoolean(8), row.getBoolean(9), row.getLong(10)));
+			rdds.add(new RDD((int) row.getLong(0), row.getString(2),
+					parentList, scopeID, (int) row.getLong(4), scopeName,
+					(int) row.getLong(5), row.getBoolean(6), row.getBoolean(7),
+					row.getBoolean(8), row.getBoolean(9), (int) row.getLong(10)));
 
 		}
 		return rdds;
@@ -370,7 +413,7 @@ public class LoggerParser {
 	 */
 	private static void printRDDGraph(DirectedAcyclicGraph<RDD, DefaultEdge> dag)
 			throws IOException {
-		printRDDGraph(dag, -1);
+		printRDDGraph(dag, -1, -1);
 	}
 
 	/**
@@ -380,8 +423,8 @@ public class LoggerParser {
 	 * @throws IOException
 	 */
 	private static void printRDDGraph(
-			DirectedAcyclicGraph<RDD, DefaultEdge> dag, int stage)
-			throws IOException {
+			DirectedAcyclicGraph<RDD, DefaultEdge> dag, int jobNumber,
+			int stageNumber) throws IOException {
 
 		DOTExporter<RDD, DefaultEdge> exporter = new DOTExporter<RDD, DefaultEdge>(
 				new VertexNameProvider<RDD>() {
@@ -421,13 +464,21 @@ public class LoggerParser {
 				}, null);
 
 		String filename = null;
-		if (stage < 0)
+		// if we are building a dag for the entire application
+		if (stageNumber < 0 && jobNumber < 0)
 			filename = APPLICATION_RDD_LABEL + DOT_EXTENSION;
-		else
-			filename = RDD_STAGE_PREFIX_LABEL + stage + GRAPH_LABEL
-					+ DOT_EXTENSION;
+		else {
+			// otherwise build the filename using jobnumber and stage number
+			filename = RDD_STAGE_PREFIX_LABEL;
+			if (jobNumber >= 0)
+				filename += JOB_LABEL + jobNumber;
+			if (stageNumber >= 0)
+				filename += STAGE_LABEL + stageNumber;
+			filename += GRAPH_LABEL + DOT_EXTENSION;
+		}
 
-		OutputStream os = hdfs.create(new Path(config.outputFolder, filename));
+		OutputStream os = hdfs.create(new Path(new Path(config.outputFolder,
+				"rdd"), filename));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
 		exporter.export(br, dag);
@@ -442,39 +493,50 @@ public class LoggerParser {
 	 */
 	private static DirectedAcyclicGraph<RDD, DefaultEdge> buildRDDDag(
 			List<RDD> rdds) {
-		return buildRDDDag(rdds, -1);
+		return buildRDDDag(rdds, -1, -1);
 	}
 
 	/**
-	 * build the dag of rdds of one stage
+	 * Build the DAG with RDD as nodes and Parent relationship as edges. job and
+	 * stage number canbe used to specify the context of the DAG
 	 * 
 	 * @param rdds
+	 * @param jobNumber
+	 *            - uses only RDDs of the specified job (specify negative values
+	 *            to use RDDs from all the jobs)
+	 * @param stageNumber
+	 *            - uses only RDDs of the specified stage (specify negative
+	 *            values to use RDDs from all the stages)
 	 * @return
 	 */
 	private static DirectedAcyclicGraph<RDD, DefaultEdge> buildRDDDag(
-			List<RDD> rdds, int stage) {
+			List<RDD> rdds, int jobNumber, int stageNumber) {
 
 		DirectedAcyclicGraph<RDD, DefaultEdge> dag = new DirectedAcyclicGraph<RDD, DefaultEdge>(
 				DefaultEdge.class);
 
 		// build an hashmap to look for rdds quickly
 		// add vertexes to the graph
-		HashMap<Long, RDD> rddMap = new HashMap<Long, RDD>(rdds.size());
+		HashMap<Integer, RDD> rddMap = new HashMap<Integer, RDD>(rdds.size());
 		for (RDD rdd : rdds) {
-			if (rdd.getStageID() == stage) {
-				rddMap.put(rdd.getId(), rdd);
-				if (!dag.containsVertex(rdd))
-					dag.addVertex(rdd);
-				logger.debug("Added RDD" + rdd.getId()
-						+ " to the graph of stage " + stage);
+			if ((stageNumber < 0 || rdd.getStageID() == stageNumber)
+					&& (jobNumber < 0 || stage2jobMap.get(rdd.getStageID()) == jobNumber)) {
+				if (!rddMap.containsKey(rdd.getId())) {
+					rddMap.put(rdd.getId(), rdd);
+					if (!dag.containsVertex(rdd))
+						dag.addVertex(rdd);
+					logger.debug("Added RDD" + rdd.getId()
+							+ " to the graph of stage " + stageNumber);
+				}
 			}
 		}
 
 		// add all edges then
-		// note that we are ingoring edges going to other stages
+		// note that we are ignoring edges going outside of the context (stage
+		// or job)
 		for (RDD rdd : dag.vertexSet()) {
 			if (rdd.getParentIDs() != null)
-				for (Long source : rdd.getParentIDs()) {
+				for (Integer source : rdd.getParentIDs()) {
 					if (dag.vertexSet().contains(rddMap.get(source))) {
 						logger.debug("Adding link from RDD " + source
 								+ "to RDD" + rdd.getId());
@@ -567,7 +629,8 @@ public class LoggerParser {
 		else
 			filename = JOB_PREFIX_LABEL + jobNumber + GRAPH_LABEL
 					+ DOT_EXTENSION;
-		OutputStream os = hdfs.create(new Path(config.outputFolder, filename));
+		OutputStream os = hdfs.create(new Path(new Path(config.outputFolder,
+				"stage"), filename));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
 		exporter.export(br, dag);
@@ -739,6 +802,7 @@ public class LoggerParser {
 			for (int i = 0; i < row.size(); i++) {
 				if (row.get(i) instanceof String
 						&& row.getString(i).startsWith("{")) {
+					//if the string starts with a parenthesis it is probably a Json object not deserialized (the scope)
 					JsonParser parser = new JsonParser();
 					JsonObject jsonObject = parser.parse(row.getString(i))
 							.getAsJsonObject();
@@ -746,8 +810,13 @@ public class LoggerParser {
 							.entrySet())
 						br.write(element.getValue().getAsString() + " ");
 					br.write(",");
-				} else if (row.get(i) instanceof ArrayBuffer<?>)
+				} 
+				//if it is an array print all the elements separated by a space (instead of a comma)
+				else if (row.get(i) instanceof ArrayBuffer<?>)
 					br.write(((ArrayBuffer<?>) row.get(i)).mkString(" ") + ',');
+				//if the element itself contains a comma then switch it to a semicolon
+				else if (row.get(i) instanceof String && ((String)row.get(i)).contains(","))
+					br.write(((String)row.get(i)).replace(',', ';') + ",");
 				else
 					br.write(row.get(i) + ",");
 			}
@@ -771,31 +840,32 @@ public class LoggerParser {
 
 		// build an hashmap to look for stages quickly
 		// and add vertexes to the graph
-		Map<Long, HashMap<Long, Stage>> jobStageMap = new HashMap<Long, HashMap<Long, Stage>>();
-		Map<Long, DirectedAcyclicGraph<Stage, DefaultEdge>> jobDagMap = new HashMap<Long, DirectedAcyclicGraph<Stage, DefaultEdge>>();
+		Map<Integer, HashMap<Integer, Stage>> jobStageMap = new HashMap<Integer, HashMap<Integer, Stage>>();
+		Map<Integer, DirectedAcyclicGraph<Stage, DefaultEdge>> jobDagMap = new HashMap<Integer, DirectedAcyclicGraph<Stage, DefaultEdge>>();
 		for (Stage stage : stages) {
 			if (!jobStageMap.containsKey(stage.getJobId()))
-				jobStageMap.put(stage.getJobId(), new HashMap<Long, Stage>());
+				jobStageMap
+						.put(stage.getJobId(), new HashMap<Integer, Stage>());
 			jobStageMap.get(stage.getJobId()).put(stage.getId(), stage);
 		}
 
-		for (Long job : jobStageMap.keySet()) {
+		for (Integer job : jobStageMap.keySet()) {
 			logger.debug("Adding job " + job + " to the graph");
 			DirectedAcyclicGraph<Stage, DefaultEdge> jobDag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
 					DefaultEdge.class);
 			jobDagMap.put(job, jobDag);
 			// add vertixes to the job dag
-			for (Long stageId : jobStageMap.get(job).keySet()) {
+			for (Integer stageId : jobStageMap.get(job).keySet()) {
 				logger.debug("Adding Stage " + stageId + " of Job " + job
 						+ " to the graph");
 				jobDag.addVertex(jobStageMap.get(job).get(stageId));
 			}
 
 			// add edges to the jobdag
-			for (Long stageId : jobStageMap.get(job).keySet()) {
+			for (Integer stageId : jobStageMap.get(job).keySet()) {
 				Stage stage = jobStageMap.get(job).get(stageId);
 				if (stage.getParentIDs() != null)
-					for (Long source : stage.getParentIDs()) {
+					for (Integer source : stage.getParentIDs()) {
 						logger.debug("Adding link from Stage " + source
 								+ "to Stage" + stage.getId());
 						jobDag.addEdge(jobStageMap.get(job).get(source), stage);
@@ -824,7 +894,8 @@ public class LoggerParser {
 
 		// build an hashmap to look for stages quickly
 		// and add vertexes to the graph
-		HashMap<Long, Stage> stageMap = new HashMap<Long, Stage>(stages.size());
+		HashMap<Integer, Stage> stageMap = new HashMap<Integer, Stage>(
+				stages.size());
 		for (Stage stage : stages) {
 			stageMap.put(stage.getId(), stage);
 			logger.debug("Adding Stage " + stage.getId() + " to the graph");
@@ -835,7 +906,7 @@ public class LoggerParser {
 		// add all edges then
 		for (Stage stage : stages) {
 			if (stage.getParentIDs() != null)
-				for (Long source : stage.getParentIDs()) {
+				for (Integer source : stage.getParentIDs()) {
 					logger.debug("Adding link from Stage " + source
 							+ "to Stage" + stage.getId());
 					dag.addEdge(stageMap.get(source), stage);

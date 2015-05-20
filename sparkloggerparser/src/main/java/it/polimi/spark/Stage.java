@@ -3,13 +3,13 @@ package it.polimi.spark;
 import java.util.List;
 
 public class Stage {
-	long jobId;
-	long id;
-	private List<Long> parentIDs;
+	int jobId;
+	int id;
+	private List<Integer> parentIDs;
 	String name;
 	private boolean executed;
 
-	public Stage(long jobId, long id, List<Long> parentIDs, String name,
+	public Stage(int jobId, int id, List<Integer> parentIDs, String name,
 			boolean executed) {
 		super();
 		this.jobId = jobId;
@@ -19,15 +19,15 @@ public class Stage {
 		this.executed = executed;
 	}
 
-	public long getJobId() {
+	public int getJobId() {
 		return jobId;
 	}
 
-	public long getId() {
+	public int getId() {
 		return id;
 	}
 
-	public List<Long> getParentIDs() {
+	public List<Integer> getParentIDs() {
 		return parentIDs;
 	}
 

@@ -4,18 +4,18 @@ import java.util.List;
 
 public class RDD {
 
-	private long id;
+	private int id;
 	private String name;
-	private List<Long> parentIDs;
-	private long partitions;
-	private long scopeID;
+	private List<Integer> parentIDs;
+	private int partitions;
+	private int scopeID;
 	private String scopeName;
-	private long stageID;
+	private int stageID;
 	private boolean useDisk;
 	private boolean useMemory;
 	private boolean useExternalBlockStore;
 	private boolean deserialized;
-	private long replication;	
+	private int replication;	
 	
 
 
@@ -33,10 +33,10 @@ public class RDD {
 	 * @param deserialized
 	 * @param replication
 	 */
-	public RDD(long id, String name, List<Long> parentIDs, long partitions,
-			long scopeID, String scopeName, long stageID, boolean useDisk,
+	public RDD(int id, String name, List<Integer> parentIDs, int partitions,
+			int scopeID, String scopeName, int stageID, boolean useDisk,
 			boolean useMemory, boolean useExternalBlockStore,
-			boolean deserialized, long replication) {
+			boolean deserialized, int replication) {
 		super();
 		this.id = id;
 		this.name = name;
@@ -68,15 +68,15 @@ public class RDD {
 		return deserialized;
 	}
 
-	public long getReplication() {
+	public int getReplication() {
 		return replication;
 	}
 
-	public long getStageID() {
+	public int getStageID() {
 		return stageID;
 	}
 
-	public long getId() {
+	public int getId() {
 		return id;
 	}
 
@@ -84,15 +84,15 @@ public class RDD {
 		return name;
 	}
 
-	public List<Long> getParentIDs() {
+	public List<Integer> getParentIDs() {
 		return parentIDs;
 	}
 
-	public long getPartitions() {
+	public int getPartitions() {
 		return partitions;
 	}
 
-	public long getScopeID() {
+	public int getScopeID() {
 		return scopeID;
 	}
 

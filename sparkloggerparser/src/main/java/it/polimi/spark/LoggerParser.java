@@ -149,8 +149,9 @@ public class LoggerParser {
 		if (config.ApplicationDAG || config.jobDAGS
 				|| config.buildStageRDDGraph || config.buildJobRDDGraph) {
 			stageDetails = retrieveStageInformation();
-			stages = extractStages(stageDetails);
-			saveListToCSV(stageDetails, "StageDetails.csv");
+			DataFrame stagePerformanceInfo = selectPerformanceInformation(stageDetails);
+			stages = extractStages(stagePerformanceInfo);
+			saveListToCSV(stagePerformanceInfo, "StageDetails.csv");
 
 			// initialize the maps used later on
 			for (Stage s : stages) {
@@ -239,13 +240,32 @@ public class LoggerParser {
 		sc.close();
 	}
 
+	private static DataFrame selectPerformanceInformation(DataFrame stageDetails) {
+		stageDetails.registerTempTable("tmp");
+		DataFrame performanceInfo = sqlContext
+					.sql("SELECT `tmp.Job ID`,"
+							+ "`tmp.Submission Time` AS JobSubmissionTime,"
+							+ "`tmp.JobCompletionTime`,"
+							+ "`tmp.Stage IDs`,"
+							+ "`tmp.Stage ID`,"
+							+ "`tmp.Stage Name`,"
+							+ "`tmp.Parent IDs`,"
+							+ "`tmp.Submission Time`,"
+							+ "`tmp.Completion Time`,"
+							+ "tmp.computed,"
+							+ "`tmp.stageinfo.Number of Tasks`"
+							+ "FROM tmp ");
+		
+		return performanceInfo;
+	}
+
 	/**
 	 * serializes the DAG for later use
 	 * 
 	 * @param dag
 	 * @param string
 	 *            - the name of the file in which serialize the DAG
-	 * @throws IOException 
+	 * @throws IOException
 	 */
 	private static void serializeDag(DirectedAcyclicGraph<?, DefaultEdge> dag,
 			String filename) throws IOException {
@@ -255,7 +275,7 @@ public class LoggerParser {
 		ObjectOutputStream objectStream = new ObjectOutputStream(os);
 		objectStream.writeObject(dag);
 		objectStream.close();
-		os.close();		
+		os.close();
 	}
 
 	/**
@@ -698,16 +718,34 @@ public class LoggerParser {
 
 		if (config.filterExecutedStages) {
 			stageDetails.registerTempTable("jobs");
+
+			sqlContext.sql(
+					"SELECT jobs.*, "
+							+ "`jobEnd.Completion Time` AS JobCompletionTime "
+							+ "FROM jobs  " + "JOIN jobEnd "
+							+ "ON `jobEnd.Job ID` = `jobs.Job ID` ")
+					.registerTempTable("jobs");
+
 			// To get the stages actually computed in the jobs table DataFrame
 			stageDetails = sqlContext
-					.sql("SELECT jobs.*,"
+					.sql("SELECT `jobs.Job ID`,"
+							+ "`jobs.Submission Time` AS JobSubmissionTime,"
+							+ "`jobs.JobCompletionTime`,"
+							+ "`jobs.Stage IDs`,"
+							+ "`jobs.minStageID`,"
+							+ "`jobs.maxStageID`,"
+							+ "`jobs.Stage ID`,"
+							+ "`jobs.Stage Name`,"
+							+ "`jobs.Parent IDs`,"
+							+ "`jobs.stageinfo`,"
+							+ "`stageComputed.Stage Info.Submission Time`,"
 							+ "`stageComputed.Stage Info.Completion Time`,"
 							+ "CASE  "
 							+ "WHEN `stageComputed.Stage Info.Completion Time` IS NOT NULL THEN true "
 							+ "WHEN `stageComputed.Stage Info.Completion Time` IS NULL THEN false "
 							+ "END AS computed "
 							+ "FROM jobs "
-							+ "LEFt JOIN stageComputed "
+							+ "LEFT JOIN stageComputed "
 							+ "ON `stageComputed.Stage Info.Stage ID` = `jobs.Stage ID`");
 		}
 

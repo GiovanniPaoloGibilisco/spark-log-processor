@@ -1,4 +1,4 @@
-package it.polimi.spark;
+package it.polimi.spark.dag;
 
 import java.io.Serializable;
 import java.util.List;

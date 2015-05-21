@@ -1,5 +1,8 @@
 package it.polimi.spark;
 
+import it.polimi.spark.dag.RDD;
+import it.polimi.spark.dag.Stage;
+
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.ObjectOutputStream;

@@ -1,8 +1,9 @@
 package it.polimi.spark;
 
+import java.io.Serializable;
 import java.util.List;
 
-public class RDD {
+public class RDD implements Serializable {
 
 	private int id;
 	private String name;

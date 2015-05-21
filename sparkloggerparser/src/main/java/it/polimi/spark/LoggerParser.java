@@ -2,6 +2,7 @@ package it.polimi.spark;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
@@ -50,10 +51,7 @@ public class LoggerParser {
 	static final String JOB_LABEL = "Job_";
 	static final String RDD_LABEL = "RDD_";
 	static final String APPLICATION_DAG_LABEL = "application-graph";
-	static final String JOB_PREFIX_LABEL = "job";
-	static final String GRAPH_LABEL = "-graph";
 	static final String APPLICATION_RDD_LABEL = "application-rdd";
-	static final String RDD_STAGE_PREFIX_LABEL = "rdd-";
 	static final String DOT_EXTENSION = ".dot";
 	static Map<Integer, ArrayList<Integer>> job2StagesMap = new HashMap<Integer, ArrayList<Integer>>();
 	static Map<Integer, Integer> stage2jobMap = new HashMap<Integer, Integer>();
@@ -174,6 +172,8 @@ public class LoggerParser {
 				DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(
 						stages, i);
 				printStageGraph(stageDag, i);
+				if (config.export)
+					serializeDag(stageDag, JOB_LABEL + i);
 			}
 		}
 
@@ -191,6 +191,9 @@ public class LoggerParser {
 				DirectedAcyclicGraph<RDD, DefaultEdge> rddDag = buildRDDDag(
 						rdds, i, -1);
 				printRDDGraph(rddDag, i, -1);
+				if (config.export)
+					serializeDag(rddDag, RDD_LABEL + JOB_LABEL
+							+ stage2jobMap.get(i).intValue());
 			}
 		}
 
@@ -200,6 +203,9 @@ public class LoggerParser {
 				DirectedAcyclicGraph<RDD, DefaultEdge> rddDag = buildRDDDag(
 						rdds, -1, i);
 				printRDDGraph(rddDag, stage2jobMap.get(i).intValue(), i);
+				if (config.export)
+					serializeDag(rddDag, RDD_LABEL + JOB_LABEL
+							+ stage2jobMap.get(i).intValue() + STAGE_LABEL + i);
 			}
 
 		}
@@ -215,9 +221,8 @@ public class LoggerParser {
 				}
 				if (config.jobDAGS) {
 					for (int i = 0; i <= numberOfJobs; i++)
-						new DottyRenderer(JOB_PREFIX_LABEL + i + GRAPH_LABEL
-								+ DOT_EXTENSION, JOB_PREFIX_LABEL + i
-								+ GRAPH_LABEL, "png").start();
+						new DottyRenderer(JOB_LABEL + i + DOT_EXTENSION,
+								JOB_LABEL + i, "png").start();
 				}
 			} else {
 				logger.info("could not find dot, DAGs have been exported but mages have not been rendered");
@@ -229,6 +234,25 @@ public class LoggerParser {
 		// clean up the mess
 		hdfs.close();
 		sc.close();
+	}
+
+	/**
+	 * serializes the DAG for later use
+	 * 
+	 * @param dag
+	 * @param string
+	 *            - the name of the file in which serialize the DAG
+	 * @throws IOException 
+	 */
+	private static void serializeDag(DirectedAcyclicGraph<?, DefaultEdge> dag,
+			String filename) throws IOException {
+
+		OutputStream os = hdfs.create(new Path(new Path(config.outputFolder,
+				"dags"), filename));
+		ObjectOutputStream objectStream = new ObjectOutputStream(os);
+		objectStream.writeObject(dag);
+		objectStream.close();
+		os.close();		
 	}
 
 	/**
@@ -469,12 +493,12 @@ public class LoggerParser {
 			filename = APPLICATION_RDD_LABEL + DOT_EXTENSION;
 		else {
 			// otherwise build the filename using jobnumber and stage number
-			filename = RDD_STAGE_PREFIX_LABEL;
+			filename = RDD_LABEL;
 			if (jobNumber >= 0)
 				filename += JOB_LABEL + jobNumber;
 			if (stageNumber >= 0)
 				filename += STAGE_LABEL + stageNumber;
-			filename += GRAPH_LABEL + DOT_EXTENSION;
+			filename += DOT_EXTENSION;
 		}
 
 		OutputStream os = hdfs.create(new Path(new Path(config.outputFolder,
@@ -627,8 +651,7 @@ public class LoggerParser {
 		if (jobNumber < 0)
 			filename = APPLICATION_DAG_LABEL + DOT_EXTENSION;
 		else
-			filename = JOB_PREFIX_LABEL + jobNumber + GRAPH_LABEL
-					+ DOT_EXTENSION;
+			filename = JOB_LABEL + jobNumber + DOT_EXTENSION;
 		OutputStream os = hdfs.create(new Path(new Path(config.outputFolder,
 				"stage"), filename));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
@@ -802,7 +825,8 @@ public class LoggerParser {
 			for (int i = 0; i < row.size(); i++) {
 				if (row.get(i) instanceof String
 						&& row.getString(i).startsWith("{")) {
-					//if the string starts with a parenthesis it is probably a Json object not deserialized (the scope)
+					// if the string starts with a parenthesis it is probably a
+					// Json object not deserialized (the scope)
 					JsonParser parser = new JsonParser();
 					JsonObject jsonObject = parser.parse(row.getString(i))
 							.getAsJsonObject();
@@ -810,13 +834,16 @@ public class LoggerParser {
 							.entrySet())
 						br.write(element.getValue().getAsString() + " ");
 					br.write(",");
-				} 
-				//if it is an array print all the elements separated by a space (instead of a comma)
+				}
+				// if it is an array print all the elements separated by a space
+				// (instead of a comma)
 				else if (row.get(i) instanceof ArrayBuffer<?>)
 					br.write(((ArrayBuffer<?>) row.get(i)).mkString(" ") + ',');
-				//if the element itself contains a comma then switch it to a semicolon
-				else if (row.get(i) instanceof String && ((String)row.get(i)).contains(","))
-					br.write(((String)row.get(i)).replace(',', ';') + ",");
+				// if the element itself contains a comma then switch it to a
+				// semicolon
+				else if (row.get(i) instanceof String
+						&& ((String) row.get(i)).contains(","))
+					br.write(((String) row.get(i)).replace(',', ';') + ",");
 				else
 					br.write(row.get(i) + ",");
 			}

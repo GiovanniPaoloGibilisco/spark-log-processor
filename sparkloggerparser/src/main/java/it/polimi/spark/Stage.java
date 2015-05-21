@@ -1,8 +1,9 @@
 package it.polimi.spark;
 
+import java.io.Serializable;
 import java.util.List;
 
-public class Stage {
+public class Stage implements Serializable {
 	int jobId;
 	int id;
 	private List<Integer> parentIDs;

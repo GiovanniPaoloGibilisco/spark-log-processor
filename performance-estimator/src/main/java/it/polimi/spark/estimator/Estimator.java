@@ -12,12 +12,14 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
@@ -46,7 +48,7 @@ public class Estimator {
 		}
 
 		// load the dags
-		Map<String, DirectedAcyclicGraph<Stage, DefaultEdge>> stageDags = new HashMap<String, DirectedAcyclicGraph<Stage, DefaultEdge>>();
+		Map<String, DirectedAcyclicGraph<Stage, DefaultEdge>> stageDags = new LinkedHashMap<String, DirectedAcyclicGraph<Stage, DefaultEdge>>();
 		if (inputFolder.toFile().isFile()) {
 			logger.info("Input folder is actually a file, processing only that file");
 			DirectedAcyclicGraph<Stage, DefaultEdge> dag = deserializeFile(inputFolder);
@@ -88,9 +90,21 @@ public class Estimator {
 		Reader in = new FileReader(performanceFile.toFile());
 		Iterable<CSVRecord> records = CSVFormat.EXCEL.withHeader().parse(in);
 		Map<Integer, CSVRecord> stagePerformanceInfo = new LinkedHashMap<Integer, CSVRecord>();
+		Map<Integer, Long> stageDurationInfo = new HashMap<Integer, Long>();
 		for (CSVRecord record : records) {
-			stagePerformanceInfo.put(Integer.decode(record.get("Stage ID")),
-					record);
+			int stageId = Integer.decode(record.get("Stage ID"));
+			stagePerformanceInfo.put(stageId, record);
+
+			long duration = 0;
+			// if the stage has not been executed its duration is 0
+			if (Boolean.parseBoolean(record.get("computed"))) {
+				long stageSubmissionTime = Long.decode(record
+						.get("Submission Time"));
+				long stageCompletionTime = Long.decode(record
+						.get("Completion Time"));
+				duration = stageCompletionTime - stageSubmissionTime;
+			}
+			stageDurationInfo.put(stageId, duration);
 		}
 
 		// calculate the job execution time by completion - submission time
@@ -108,13 +122,41 @@ public class Estimator {
 			}
 		}
 
-		for (int jobId : jobCompletionTimes.keySet()) {
-			logger.info("Job " + jobId + " has been compleated in "
-					+ jobCompletionTimes.get(jobId) + " milliseconds");
+		long estimatedApplicationExecutionTime =0;
+		
+		for (String dagName : stageDags.keySet()) {
+			int jobId = Integer.decode(dagName.split("Job_")[1]);
+			DirectedAcyclicGraph<Stage, DefaultEdge> dag = stageDags
+					.get(dagName);
+			Stage finalStage = null;
+			for (Stage stage : dag.vertexSet()) {
+				if (dag.outDegreeOf(stage) == 0) {
+					finalStage = stage;
+					break;
+				}
+			}
+
+			
+			long estimatedDuration =  estimateJobDuration(dag, stageDurationInfo, finalStage);
+			long actualDuration =  jobCompletionTimes.get(jobId);
+			long error = Math.abs(estimatedDuration-actualDuration);
+			float errorPercentage = ((float)error/(float)actualDuration)*100;
+			logger.info("Job " + jobId + ": expected duration: " + estimatedDuration 
+					+ " ms. actual duration " + actualDuration	+ " ms. error: "+error+" error percentage: "+errorPercentage+"%");
+			estimatedApplicationExecutionTime += estimatedDuration;
 		}
+		logger.info("Total Estimated Application execution time: "+estimatedApplicationExecutionTime+" ms.");
 
 	}
 
+	/**
+	 * Deserializes the file containign a Stage DAG
+	 * 
+	 * @param file
+	 * @return
+	 * @throws IOException
+	 * @throws ClassNotFoundException
+	 */
 	private static DirectedAcyclicGraph<Stage, DefaultEdge> deserializeFile(
 			Path file) throws IOException, ClassNotFoundException {
 		InputStream fileIn = Files.newInputStream(file);
@@ -135,5 +177,36 @@ public class Estimator {
 		}
 
 		return dag;
+	}
+
+	/**
+	 * Gets the duration of the dag starting from the finalStage and using:
+	 * "duration(finalStage) + max(duration(finalStage.parents))" it operates
+	 * recursively on the entire DAG.
+	 * 
+	 * @param dag
+	 * @param stageDuration
+	 * @param finalStage
+	 * @return
+	 */
+	private static long estimateJobDuration(
+			// TODO: find a smarter way to do this by saving partial
+			// computations, perform branch pruning or some other tricks.
+			DirectedAcyclicGraph<Stage, DefaultEdge> dag,
+			Map<Integer, Long> stageDuration, Stage finalStage) {
+
+		// default case, if the stage does not depend on other stages then it is
+		// just its duration
+		if (dag.inDegreeOf(finalStage) == 0)
+			return stageDuration.get(finalStage.getId());
+
+		// if the stage has dependencies the duration is is own duration plus
+		// the maximum duration of its parents.
+		List<Long> parentDurations = new ArrayList<Long>();
+		for (DefaultEdge edge : dag.incomingEdgesOf(finalStage))
+			parentDurations.add(estimateJobDuration(dag, stageDuration,
+					dag.getEdgeSource(edge)));
+
+		return stageDuration.get(finalStage.getId()) + Collections.max(parentDurations);
 	}
 }

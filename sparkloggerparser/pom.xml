@@ -4,7 +4,6 @@
 	<groupId>it.polimi.spark</groupId>
 	<artifactId>sparkloggerparser</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-
 	<dependencies>
 		<dependency>
 			<groupId>com.beust</groupId>

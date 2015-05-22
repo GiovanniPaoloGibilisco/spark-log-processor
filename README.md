@@ -11,16 +11,13 @@ To generate log files from Spark you should add the following properties to your
 Note that the spark event log directory can also be on another file system like hdfs (e.g. hdfs://user/logs)
 In order to build the DAG from from the logs the latest development versionof Spark (1.4.0.snaphot) should be used.
 
+Use parameter `-u --usage` to show the Usage Guide
 
-The tool accepts 3 parameters:
-* the path to the log file `-i --inputFile`
-* the path to the output folder `-o --outputFile`
-* the optional flag `-l` can be used to run the tool in a local instance of spark istead of using a cluster
-
-Once built has been built can be invoked by using spark-submit script
+Once built has been built can be invoked by using spark-submit script available in spark
 
 ## Build
 The tool can be built using Maven with
+
 `mvn clean package`
 
 it will generate a fat jar with all the needed dependencies

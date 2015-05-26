@@ -242,20 +242,13 @@ public class LoggerParser {
 
 	private static DataFrame selectPerformanceInformation(DataFrame stageDetails) {
 		stageDetails.registerTempTable("tmp");
-		DataFrame performanceInfo = sqlContext
-					.sql("SELECT `tmp.Job ID`,"
-							+ "`tmp.Submission Time` AS JobSubmissionTime,"
-							+ "`tmp.JobCompletionTime`,"
-							+ "`tmp.Stage IDs`,"
-							+ "`tmp.Stage ID`,"
-							+ "`tmp.Stage Name`,"
-							+ "`tmp.Parent IDs`,"
-							+ "`tmp.Submission Time`,"
-							+ "`tmp.Completion Time`,"
-							+ "tmp.computed,"
-							+ "`tmp.stageinfo.Number of Tasks`"
-							+ "FROM tmp ");
-		
+		DataFrame performanceInfo = sqlContext.sql("SELECT `tmp.Job ID`,"
+				+ "`tmp.JobSubmissionTime`," + "`tmp.JobCompletionTime`,"
+				+ "`tmp.Stage IDs`," + "`tmp.Stage ID`," + "`tmp.Stage Name`,"
+				+ "`tmp.Parent IDs`," + "`tmp.Submission Time`,"
+				+ "`tmp.Completion Time`," + "tmp.computed,"
+				+ "`tmp.stageinfo.Number of Tasks`" + "FROM tmp ");
+
 		return performanceInfo;
 	}
 
@@ -703,9 +696,8 @@ public class LoggerParser {
 				.registerTempTable("jobEnd");
 
 		sqlContext.sql(
-				"SELECT  `Job ID`," + "`Submission Time`," + "`Stage Infos`,"
-						+ "`Stage IDs`" + "FROM jobs ").registerTempTable(
-				"jobs");
+				"SELECT  `Job ID`," + "`Stage Infos`," + "`Stage IDs`,"+"`Submission Time` AS JobSubmissionTime "
+						+ "FROM jobs ").registerTempTable("jobs");
 
 		retrieveInitialAndFinalStage();
 
@@ -729,8 +721,8 @@ public class LoggerParser {
 			// To get the stages actually computed in the jobs table DataFrame
 			stageDetails = sqlContext
 					.sql("SELECT `jobs.Job ID`,"
-							+ "`jobs.Submission Time` AS JobSubmissionTime,"
-							+ "`jobs.JobCompletionTime`,"
+							+ "jobs.JobSubmissionTime,"
+							+ "jobs.JobCompletionTime,"
 							+ "`jobs.Stage IDs`,"
 							+ "`jobs.minStageID`,"
 							+ "`jobs.maxStageID`,"

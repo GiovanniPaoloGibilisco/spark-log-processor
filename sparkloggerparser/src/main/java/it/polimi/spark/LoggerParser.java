@@ -38,6 +38,7 @@ import org.slf4j.LoggerFactory;
 
 import scala.collection.JavaConversions;
 import scala.collection.Seq;
+import scala.collection.Traversable;
 import scala.collection.mutable.ArrayBuffer;
 
 import com.google.gson.JsonElement;
@@ -870,15 +871,16 @@ public class LoggerParser {
 				}
 				// if it is an array print all the elements separated by a space
 				// (instead of a comma)
-				else if (row.get(i) instanceof ArrayBuffer<?>)
-					br.write(((ArrayBuffer<?>) row.get(i)).mkString(" ") + ',');
+				else if (row.get(i) instanceof Traversable<?>)
+					br.write(((ArrayBuffer<?>) row.get(i)).mkString(" ") + ',');				
 				// if the element itself contains a comma then switch it to a
 				// semicolon
 				else if (row.get(i) instanceof String
 						&& ((String) row.get(i)).contains(","))
 					br.write(((String) row.get(i)).replace(',', ';') + ",");
-				else
+				else{
 					br.write(row.get(i) + ",");
+				}
 			}
 			br.write("\n");
 		}

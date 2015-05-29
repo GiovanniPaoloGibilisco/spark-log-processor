@@ -872,7 +872,7 @@ public class LoggerParser {
 				// if it is an array print all the elements separated by a space
 				// (instead of a comma)
 				else if (row.get(i) instanceof Traversable<?>)
-					br.write(((ArrayBuffer<?>) row.get(i)).mkString(" ") + ',');				
+					br.write(((Traversable<?>) row.get(i)).mkString(" ") + ',');				
 				// if the element itself contains a comma then switch it to a
 				// semicolon
 				else if (row.get(i) instanceof String

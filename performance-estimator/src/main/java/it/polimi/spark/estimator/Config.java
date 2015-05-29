@@ -34,14 +34,14 @@ public class Config implements Serializable {
 		_instance = new Config();
 		commander = new JCommander(_instance, args);
 		logger.info("Configuration: --dagInputFolder {} --outputFolder {} --usage {} --stagePerformance {}",
-				new Object[] { _instance.dagInputFolder, _instance.outputFolder, _instance.usage, _instance.stagePerformanceFile });
+				new Object[] { _instance.dagInputFolder, _instance.outputFile, _instance.usage, _instance.stagePerformanceFile });
 	}
 
 	@Parameter(names = { "-i", "--dagInputFolder" }, required = true, description = "Path to the input folder containing the serialized DAGs")
 	public String dagInputFolder;
 
 	@Parameter(names = { "-o", "--outputFolder" }, required = false, description = "output folder to store something")
-	public String outputFolder;
+	public String outputFile;
 	
 	@Parameter(names = { "-p", "--stagePerformance" }, required = true, description = "Path to the stage performance CSV input file")
 	public String stagePerformanceFile;

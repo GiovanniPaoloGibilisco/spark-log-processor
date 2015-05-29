@@ -3,6 +3,7 @@ package it.polimi.spark.estimator;
 import it.polimi.spark.dag.Stage;
 
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.csv.CSVRecord;
 import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
@@ -122,8 +124,22 @@ public class Estimator {
 			}
 		}
 
-		long estimatedApplicationExecutionTime =0;
-		
+		long estimatedApplicationExecutionTime = 0;
+		boolean output = true;
+		if (config.outputFile == null) {
+			logger.info("An output file has not been specified or can not be created.");
+			output = false;
+		}
+		CSVPrinter csvFilePrinter = null;
+		FileWriter fileWriter = null;
+		if (output) {
+			fileWriter = new FileWriter(Paths.get(config.outputFile).toFile());
+			CSVFormat format = CSVFormat.DEFAULT.withHeader("Job ID",
+					"Estimated Duration", "Actual Duration", "Error",
+					"Error Percentage");
+			csvFilePrinter = new CSVPrinter(fileWriter, format);
+		}
+
 		for (String dagName : stageDags.keySet()) {
 			int jobId = Integer.decode(dagName.split("Job_")[1]);
 			DirectedAcyclicGraph<Stage, DefaultEdge> dag = stageDags
@@ -136,16 +152,31 @@ public class Estimator {
 				}
 			}
 
-			
-			long estimatedDuration =  estimateJobDuration(dag, stageDurationInfo, finalStage);
-			long actualDuration =  jobCompletionTimes.get(jobId);
-			long error = Math.abs(estimatedDuration-actualDuration);
-			float errorPercentage = ((float)error/(float)actualDuration)*100;
-			logger.info("Job " + jobId + ": expected duration: " + estimatedDuration 
-					+ " ms. actual duration " + actualDuration	+ " ms. error: "+error+" error percentage: "+errorPercentage+"%");
+			long estimatedDuration = estimateJobDuration(dag,
+					stageDurationInfo, finalStage);
+			long actualDuration = jobCompletionTimes.get(jobId);
+			long error = Math.abs(estimatedDuration - actualDuration);
+			float errorPercentage = ((float) error / (float) actualDuration) * 100;
+
+			// export and print the output
+			if (output) {
+				csvFilePrinter.printRecord(jobId, estimatedDuration,
+						actualDuration, error, errorPercentage);
+			}
+			logger.info("Job " + jobId + ": expected duration: "
+					+ estimatedDuration + " ms. actual duration "
+					+ actualDuration + " ms. error: " + error
+					+ " error percentage (error/actual): " + errorPercentage
+					+ "%");
 			estimatedApplicationExecutionTime += estimatedDuration;
 		}
-		logger.info("Total Estimated Application execution time: "+estimatedApplicationExecutionTime+" ms.");
+		if (output) {
+			fileWriter.flush();
+			fileWriter.close();
+			csvFilePrinter.close();
+		}
+		logger.info("Total Estimated Application execution time: "
+				+ estimatedApplicationExecutionTime + " ms.");
 
 	}
 
@@ -207,6 +238,7 @@ public class Estimator {
 			parentDurations.add(estimateJobDuration(dag, stageDuration,
 					dag.getEdgeSource(edge)));
 
-		return stageDuration.get(finalStage.getId()) + Collections.max(parentDurations);
+		return stageDuration.get(finalStage.getId())
+				+ Collections.max(parentDurations);
 	}
 }

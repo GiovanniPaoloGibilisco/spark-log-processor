@@ -91,7 +91,7 @@ public class LoggerParser {
 		// exactly one otherwise we will not know where the user wants to get
 		// the logs from
 		if (config.inputFile != null && config.applicationID != null) {
-			logger.info("Either the input file (-i option) or the application id (-a option) has to be specified.");
+			logger.info("Either the input file (-i option) or the application id (-app option) has to be specified.");
 			return;
 		}
 
@@ -149,6 +149,8 @@ public class LoggerParser {
 		// parse stage details
 		if (config.ApplicationDAG || config.jobDAGS
 				|| config.buildStageRDDGraph || config.buildJobRDDGraph) {
+			DataFrame applicationEvents = retrieveApplicationEvents();
+			saveListToCSV(applicationEvents, "application.csv");
 			stageDetails = retrieveStageInformation();
 			DataFrame stagePerformanceInfo = selectPerformanceInformation(stageDetails);
 			stages = extractStages(stagePerformanceInfo);
@@ -236,9 +238,19 @@ public class LoggerParser {
 			logger.info("could not run dotty, DAGs have been exported but mages have not been rendered");
 		}
 
-		// clean up the mess
-		hdfs.close();
-		sc.close();
+		// clean up the mess		
+		try {
+			hdfs.close();		
+			sc.close();	
+		} catch (Exception e) {
+			logger.warn("Hdfs or Spark context was already closed");
+		}
+		
+	}
+
+	private static DataFrame retrieveApplicationEvents() {
+		return sqlContext
+				.sql("SELECT Event, `App ID`, Timestamp FROM events WHERE Event LIKE '%ApplicationStart' OR Event LIKE '%ApplicationEnd'");
 	}
 
 	private static DataFrame selectPerformanceInformation(DataFrame stageDetails) {
@@ -697,7 +709,8 @@ public class LoggerParser {
 				.registerTempTable("jobEnd");
 
 		sqlContext.sql(
-				"SELECT  `Job ID`," + "`Stage Infos`," + "`Stage IDs`,"+"`Submission Time` AS JobSubmissionTime "
+				"SELECT  `Job ID`," + "`Stage Infos`," + "`Stage IDs`,"
+						+ "`Submission Time` AS JobSubmissionTime "
 						+ "FROM jobs ").registerTempTable("jobs");
 
 		retrieveInitialAndFinalStage();
@@ -872,13 +885,13 @@ public class LoggerParser {
 				// if it is an array print all the elements separated by a space
 				// (instead of a comma)
 				else if (row.get(i) instanceof Traversable<?>)
-					br.write(((Traversable<?>) row.get(i)).mkString(" ") + ',');				
+					br.write(((Traversable<?>) row.get(i)).mkString(" ") + ',');
 				// if the element itself contains a comma then switch it to a
 				// semicolon
 				else if (row.get(i) instanceof String
 						&& ((String) row.get(i)).contains(","))
 					br.write(((String) row.get(i)).replace(',', ';') + ",");
-				else{
+				else {
 					br.write(row.get(i) + ",");
 				}
 			}

@@ -238,13 +238,13 @@ public class LoggerParser {
 			logger.info("could not run dotty, DAGs have been exported but mages have not been rendered");
 		}
 
-		// clean up the mess		
-		try {
+		// clean up the mess (removed since if the application exites fine this generates an error)
+		/*try {
 			hdfs.close();		
 			sc.close();	
 		} catch (Exception e) {
 			logger.warn("Hdfs or Spark context was already closed");
-		}
+		}*/
 		
 	}
 

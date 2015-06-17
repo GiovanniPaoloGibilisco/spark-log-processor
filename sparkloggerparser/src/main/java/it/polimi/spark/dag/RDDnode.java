@@ -3,7 +3,7 @@ package it.polimi.spark.dag;
 import java.io.Serializable;
 import java.util.List;
 
-public class RDD implements Serializable {
+public class RDDnode implements Serializable {
 
 	private int id;
 	private String name;
@@ -34,7 +34,7 @@ public class RDD implements Serializable {
 	 * @param deserialized
 	 * @param replication
 	 */
-	public RDD(int id, String name, List<Integer> parentIDs, int partitions,
+	public RDDnode(int id, String name, List<Integer> parentIDs, int partitions,
 			int scopeID, String scopeName, int stageID, boolean useDisk,
 			boolean useMemory, boolean useExternalBlockStore,
 			boolean deserialized, int replication) {

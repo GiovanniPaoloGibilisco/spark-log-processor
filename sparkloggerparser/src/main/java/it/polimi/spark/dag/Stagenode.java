@@ -1,17 +1,16 @@
 package it.polimi.spark.dag;
 
-
 import java.io.Serializable;
 import java.util.List;
 
-public class Stage implements Serializable {
+public class Stagenode implements Serializable {
 	int jobId;
 	int id;
 	private List<Integer> parentIDs;
 	String name;
 	private boolean executed;
 
-	public Stage(int jobId, int id, List<Integer> parentIDs, String name,
+	public Stagenode(int jobId, int id, List<Integer> parentIDs, String name,
 			boolean executed) {
 		super();
 		this.jobId = jobId;

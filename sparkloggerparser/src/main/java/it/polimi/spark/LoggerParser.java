@@ -1,7 +1,7 @@
 package it.polimi.spark;
 
-import it.polimi.spark.dag.RDD;
-import it.polimi.spark.dag.Stage;
+import it.polimi.spark.dag.RDDnode;
+import it.polimi.spark.dag.Stagenode;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -10,7 +10,9 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,6 +28,10 @@ import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.HiveContext;
+import org.apache.spark.sql.types.ArrayType;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.jgraph.graph.AttributeMap;
 import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
@@ -57,9 +63,10 @@ public class LoggerParser {
 	static final String APPLICATION_DAG_LABEL = "application-graph";
 	static final String APPLICATION_RDD_LABEL = "application-rdd";
 	static final String DOT_EXTENSION = ".dot";
-	static Map<Integer, ArrayList<Integer>> job2StagesMap = new HashMap<Integer, ArrayList<Integer>>();
+	static Map<Integer, List<Integer>> job2StagesMap = new HashMap<Integer, List<Integer>>();
 	static Map<Integer, Integer> stage2jobMap = new HashMap<Integer, Integer>();
 
+	@SuppressWarnings("deprecation")
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
 
@@ -78,8 +85,9 @@ public class LoggerParser {
 			return;
 		}
 
-		if (config.runLocal)
+		if (config.runLocal) {
 			conf.setMaster("local[1]");
+		}
 
 		// either -i or -app has to be specified
 		if (config.inputFile == null && config.applicationID == null) {
@@ -117,6 +125,7 @@ public class LoggerParser {
 			return;
 		}
 
+		@SuppressWarnings("resource")
 		JavaSparkContext sc = new JavaSparkContext(conf);
 
 		sqlContext = new HiveContext(sc.sc());
@@ -126,6 +135,8 @@ public class LoggerParser {
 
 		// load the logs
 		DataFrame logsframe = sqlContext.jsonFile(config.inputFile);
+		logsframe = sqlContext.applySchema(logsframe.toJavaRDD(),
+				(StructType) cleanSchema(logsframe.schema()));
 		logsframe.cache();
 
 		// register the main table with all the logs as "events"
@@ -140,44 +151,102 @@ public class LoggerParser {
 			saveListToCSV(taskDetails, "TaskDetails.csv");
 		}
 
-		DataFrame stageDetails = null;
+		DataFrame stageDetailsFrame = null;
+		List<Row> stageDetails = null;
+		List<String> stageDetailsColumns = null;
+
+		DataFrame jobDetailsFrame = null;
+		List<Row> jobDetails = null;
+		List<String> jobDetailsColumns = null;
+
+		List<Stagenode> stageNodes = null;
 		List<Stage> stages = null;
+		List<Job> jobs = null;
+
 		int numberOfJobs = 0;
 		int numberOfStages = 0;
+		Benchmark application = null;
+
+		DBHandler dbHandler = null;
+		if (config.toDB) {
+			if (config.dbUser == null)
+				logger.warn("No user name has been specified for the connection with the DB, results will not be uploaded");
+			if (config.dbPassword == null)
+				logger.warn("No password has been specified for the connection with the DB, results will not be uploaded");
+			if (config.dbUser != null && config.dbPassword != null) {
+				dbHandler = new DBHandler(config.dbUrl, config.dbUser,
+						config.dbPassword);
+				application = retrieveApplicationConfiguration();
+			}
+		}
 
 		// I could also remove the if, almost every functionality require to
 		// parse stage details
 		if (config.ApplicationDAG || config.jobDAGS
-				|| config.buildStageRDDGraph || config.buildJobRDDGraph) {
+				|| config.buildStageRDDGraph || config.buildJobRDDGraph
+				|| config.toDB) {
 			DataFrame applicationEvents = retrieveApplicationEvents();
 			saveListToCSV(applicationEvents, "application.csv");
-			stageDetails = retrieveStageInformation();
-			DataFrame stagePerformanceInfo = selectPerformanceInformation(stageDetails);
-			stages = extractStages(stagePerformanceInfo);
-			saveListToCSV(stagePerformanceInfo, "StageDetails.csv");
+			// add the duration to the application
+			if (application != null && config.toDB)
+				application.setDuration(getDuration(applicationEvents));
 
-			// initialize the maps used later on
-			for (Stage s : stages) {
-				stage2jobMap.put(s.getId(), s.getJobId());
-				if (!job2StagesMap.containsKey(s.getJobId()))
-					job2StagesMap.put(s.getJobId(), new ArrayList<Integer>());
-				job2StagesMap.get(s.getJobId()).add(s.getId());
+			// collect stages from log files
+			stageDetailsFrame = retrieveStageInformation();
+			saveListToCSV(stageDetailsFrame, "StageDetails.csv");
+			stageDetails = stageDetailsFrame.collectAsList();
+			stageDetailsColumns = new ArrayList<String>(
+					Arrays.asList(stageDetailsFrame.columns()));
+
+			// collect jobs from log files
+			jobDetailsFrame = retrieveJobInformation();
+			saveListToCSV(jobDetailsFrame, "JobDetails.csv");
+			jobDetails = jobDetailsFrame.collectAsList();
+			jobDetailsColumns = new ArrayList<String>(
+					Arrays.asList(jobDetailsFrame.columns()));
+
+			initMaps(stageDetails, stageDetailsColumns, jobDetails,
+					jobDetailsColumns);
+
+			stageNodes = extractStageNodes(stageDetails, stageDetailsColumns);
+			if (config.toDB && application != null) {
+				stages = extractStages(stageDetails, stageDetailsColumns,
+						application.getClusterName(), application.getAppID());
+				jobs = extractJobs(jobDetails, jobDetailsColumns,
+						application.getClusterName(), application.getAppID());
+
+				Map<Integer, Stage> stageById = new HashMap<Integer, Stage>(
+						stages.size());
+				for (Stage stage : stages)
+					stageById.put(stage.getStageID(), stage);
+
+				for (Job job : jobs) {
+					// link job to application
+					application.addJob(job);
+
+					// link stages to jobs
+					for (int stageId : job2StagesMap.get(job.getJobID()))
+						// skip non executed
+						if (stageById.containsKey(stageId))
+							job.addStage(stageById.get(stageId));
+
+				}
+
 			}
-			// initialize stage and job number counters
-			numberOfJobs = getNumberOfJobs(stageDetails);
-			numberOfStages = getNumberOfStages(stageDetails);
 
+			numberOfJobs = jobDetails.size();
+			numberOfStages = stageDetails.size();
 		}
 
 		if (config.ApplicationDAG) {
-			DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(stages);
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> stageDag = buildStageDag(stageNodes);
 			printStageGraph(stageDag);
 		}
 
 		if (config.jobDAGS) {
 			for (int i = 0; i <= numberOfJobs; i++) {
-				DirectedAcyclicGraph<Stage, DefaultEdge> stageDag = buildStageDag(
-						stages, i);
+				DirectedAcyclicGraph<Stagenode, DefaultEdge> stageDag = buildStageDag(
+						stageNodes, i);
 				printStageGraph(stageDag, i);
 				if (config.export)
 					serializeDag(stageDag, JOB_LABEL + i);
@@ -185,9 +254,8 @@ public class LoggerParser {
 		}
 
 		// This part takes care of functionalities related to rdds
-		List<RDD> rdds = null;
+		List<RDDnode> rdds = null;
 		if (config.buildJobRDDGraph || config.buildStageRDDGraph) {
-			stageDetails.registerTempTable("jobs");
 			DataFrame rddDetails = retrieveRDDInformation();
 			saveListToCSV(rddDetails, "rdd.csv");
 			rdds = extractRDDs(rddDetails);
@@ -195,7 +263,7 @@ public class LoggerParser {
 
 		if (config.buildJobRDDGraph) {
 			for (int i = 0; i <= numberOfJobs; i++) {
-				DirectedAcyclicGraph<RDD, DefaultEdge> rddDag = buildRDDDag(
+				DirectedAcyclicGraph<RDDnode, DefaultEdge> rddDag = buildRDDDag(
 						rdds, i, -1);
 				printRDDGraph(rddDag, i, -1);
 				if (config.export)
@@ -207,7 +275,7 @@ public class LoggerParser {
 		if (config.buildStageRDDGraph) {
 			// register the current dataframe as jobs table
 			for (int i = 0; i <= numberOfStages; i++) {
-				DirectedAcyclicGraph<RDD, DefaultEdge> rddDag = buildRDDDag(
+				DirectedAcyclicGraph<RDDnode, DefaultEdge> rddDag = buildRDDDag(
 						rdds, -1, i);
 				printRDDGraph(rddDag, stage2jobMap.get(i).intValue(), i);
 				if (config.export)
@@ -217,52 +285,254 @@ public class LoggerParser {
 
 		}
 
-		// build images with dotty (if available)
-		// check if dotty is available in the path
-		try {
-			if (DottyRenderer.isDottyAvailable() && filesAreLocal()) {
-				if (config.ApplicationDAG) {
-					new DottyRenderer(APPLICATION_DAG_LABEL + DOT_EXTENSION,
-							APPLICATION_DAG_LABEL, "png").start();
-
-				}
-				if (config.jobDAGS) {
-					for (int i = 0; i <= numberOfJobs; i++)
-						new DottyRenderer(JOB_LABEL + i + DOT_EXTENSION,
-								JOB_LABEL + i, "png").start();
-				}
-			} else {
-				logger.info("could not find dot, DAGs have been exported but mages have not been rendered");
+		if (config.toDB && application != null && dbHandler != null)
+			try {
+				dbHandler.insertBenchmark(application);
+			} catch (SQLException e) {
+				logger.warn(
+						"The application could not be added to the database ",
+						e);
 			}
-		} catch (IOException e) {
-			logger.info("could not run dotty, DAGs have been exported but mages have not been rendered");
+		if (dbHandler != null)
+			dbHandler.close();
+	}
+
+	/**
+	 * Extract all the jobs in objects containing performance information, no
+	 * topological info is saved
+	 * 
+	 * @param jobDetails
+	 * @param jobColumns
+	 * @param clusterName
+	 * @param applicationID
+	 * @return
+	 */
+	private static List<Job> extractJobs(List<Row> jobDetails,
+			List<String> jobColumns, String clusterName, String appID) {
+
+		List<Job> jobs = new ArrayList<Job>();
+		for (Row row : jobDetails) {
+			int jobId = (int) row.getLong(jobColumns.indexOf("Job ID"));
+			Job job = new Job(clusterName, appID, jobId);
+			job.setDuration((int) row.getLong(jobColumns.indexOf("Duration")));
+			jobs.add(job);
+		}
+		return jobs;
+
+	}
+
+	/**
+	 * Initializes the hashmaps used to retrieve job id from stage and viceversa
+	 * (a list of stage id from a job id)
+	 * 
+	 * @param stageDetails
+	 * @param stageColumns
+	 * @param jobDetails
+	 * @param jobColumns
+	 */
+	@SuppressWarnings("unchecked")
+	private static void initMaps(List<Row> stageDetails,
+			List<String> stageColumns, List<Row> jobDetails,
+			List<String> jobColumns) {
+
+		// setup hashmap from job to list of stages ids and viceversa
+		for (Row row : jobDetails) {
+			int jobID = (int) row.getLong(jobColumns.indexOf("Job ID"));
+			List<Long> tmpStageList = null;
+			List<Integer> stageList = null;
+			if (row.get(jobColumns.indexOf("Stage IDs")) instanceof scala.collection.immutable.List<?>)
+				tmpStageList = JavaConversions.asJavaList((Seq<Long>) row
+						.get(jobColumns.indexOf("Stage IDs")));
+			else if (row.get(jobColumns.indexOf("Stage IDs")) instanceof ArrayBuffer<?>)
+				tmpStageList = JavaConversions
+						.asJavaList((ArrayBuffer<Long>) row.get(jobColumns
+								.indexOf("Stage IDs")));
+			else {
+				logger.warn("Could not parse Stage IDs Serialization:"
+						+ row.get(jobColumns.indexOf("Stage IDs")).toString()
+						+ " class: "
+						+ row.get(jobColumns.indexOf("Stage IDs")).getClass()
+						+ " Object: "
+						+ row.get(jobColumns.indexOf("Stage IDs")));
+			}
+
+			// convert it to integers
+			stageList = new ArrayList<Integer>();
+			for (Long stage : tmpStageList) {
+				stageList.add(stage.intValue());
+				// Initialize the hashmap StageID -> JobID
+				stage2jobMap.put(stage.intValue(), jobID);
+			}
+			// and the one JobID -> List of stage IDs
+			job2StagesMap.put(jobID, stageList);
+		}
+	}
+
+	/**
+	 * Extract all the stages in objects containing performance information, no
+	 * topological info is saved
+	 * 
+	 * @param stageDetails
+	 * @param stageColumns
+	 * @param clusterName
+	 * @param applicationID
+	 * @return
+	 */
+	private static List<Stage> extractStages(List<Row> stageDetails,
+			List<String> stageColumns, String clusterName, String applicationID) {
+
+		List<Stage> stages = new ArrayList<Stage>();
+		for (Row row : stageDetails) {
+			// filter outnon executed stages
+			if (Boolean.parseBoolean(row.getString(stageColumns
+					.indexOf("Executed")))) {
+				int stageId = (int) row.getLong(stageColumns
+						.indexOf("Stage ID"));
+				Stage stage = new Stage(clusterName, applicationID,
+						stage2jobMap.get(stageId), stageId);
+				stage.setDuration(Integer.parseInt(row.getString(stageColumns
+						.indexOf("Duration"))));
+				// TODO: add parsing of input/output and shuffle sizes
+				stages.add(stage);
+			}
+		}
+		return stages;
+
+	}
+
+	private static int getDuration(DataFrame applicationEvents) {
+
+		Row[] events = applicationEvents.collect();
+		long startTime = 0;
+		long endTime = 0;
+		for (Row event : events) {
+			if (event.getString(0).equals("SparkListenerApplicationStart"))
+				startTime = event.getLong(2);
+			else
+				endTime = event.getLong(2);
 		}
 
-		// clean up the mess (removed since if the application exites fine this generates an error)
-		/*try {
-			hdfs.close();		
-			sc.close();	
-		} catch (Exception e) {
-			logger.warn("Hdfs or Spark context was already closed");
-		}*/
-		
+		return (int) (endTime - startTime);
+	}
+
+	private static Benchmark retrieveApplicationConfiguration() {
+
+		DataFrame sparkPropertiesDf = sqlContext
+				.sql("SELECT `Spark Properties` FROM events WHERE Event LIKE '%EnvironmentUpdate'");
+		StructType schema = (StructType) ((StructType) sparkPropertiesDf
+				.schema()).fields()[0].dataType();
+
+		List<String> columns = new ArrayList<String>();
+		for (String column : schema.fieldNames())
+			columns.add(column);
+
+		String selectedColumns = "";
+		for (String column : columns) {
+			selectedColumns += "`Spark Properties." + column + "`" + ", ";
+		}
+
+		sparkPropertiesDf = sqlContext.sql("SELECT " + selectedColumns
+				+ "`System Properties.sun-java-command`"
+				+ " FROM events WHERE Event LIKE '%EnvironmentUpdate'");
+
+		// there should only be one of such events
+		Row row = sparkPropertiesDf.toJavaRDD().first();
+
+		Benchmark application = new Benchmark(row.getString(columns
+				.indexOf("spark-master")), row.getString(columns
+				.indexOf("spark-app-id")));
+		if (columns.contains("spark-app-name"))
+			application.setAppName(row.getString(columns
+					.indexOf("spark-app-name")));
+
+		if (columns.contains("spark-driver-memory")) {
+			String memory = row.getString(columns
+					.indexOf("spark-driver-memory"));
+			// removing g or m
+			memory = memory.substring(0, memory.length() - 1);
+			application.setDriverMemory(Double.parseDouble(memory));
+		}
+
+		if (columns.contains("spark-executor-memory")) {
+			String memory = row.getString(columns
+					.indexOf("spark-executor-memory"));
+			// removing g or m
+			memory = memory.substring(0, memory.length() - 1);
+			application.setExecutorMemory(Double.parseDouble(memory));
+		}
+
+		if (columns.contains("spark-kryoserializer-buffer-max")) {
+			String memory = row.getString(columns
+					.indexOf("spark-kryoserializer-buffer-max"));
+			// removing g or m
+			memory = memory.substring(0, memory.length() - 1);
+			application.setKryoMaxBuffer(Integer.parseInt(memory));
+		}
+
+		if (columns.contains("spark-rdd-compress"))
+			application.setRddCompress(Boolean.parseBoolean(row
+					.getString(columns.indexOf("spark-rdd-compress"))));
+
+		if (columns.contains("spark-storage-memoryFraction"))
+			application
+					.setStorageMemoryFraction(Double.parseDouble(row
+							.getString(columns
+									.indexOf("spark-storage-memoryFraction"))));
+
+		if (columns.contains("spark-shuffle-memoryFraction"))
+			application
+					.setShuffleMemoryFraction(Double.parseDouble(row
+							.getString(columns
+									.indexOf("spark-shuffle-memoryFraction"))));
+
+		String storageLevel = row.getString(columns.size()).split(" ")[row
+				.getString(columns.size()).split(" ").length - 1];
+		if (storageLevel.equals("MEMORY_ONLY")
+				|| storageLevel.equals("MEMORY_AND_DISK")
+				|| storageLevel.equals("DISK_ONLY")
+				|| storageLevel.equals("MEMORY_AND_DISK_SER")
+				|| storageLevel.equals("MEMORY_ONLY_2")
+				|| storageLevel.equals("MEMORY_AND_DISK_2")
+				|| storageLevel.equals("OFF_HEAP")
+				|| storageLevel.equals("MEMORY_ONLY_SER"))
+			application.setStorageLevel(storageLevel);
+
+		// sqlContext.sql("SELECT * FROM SystemProperties").show();
+
+		return application;
+
+	}
+
+	/**
+	 * fixes the schema derived from json by subsituting dots in names with -
+	 * 
+	 * @param dataType
+	 * @return
+	 */
+	private static DataType cleanSchema(DataType dataType) {
+		if (dataType instanceof StructType) {
+			StructField[] fields = new StructField[((StructType) dataType)
+					.fields().length];
+			int i = 0;
+			for (StructField field : ((StructType) dataType).fields()) {
+				fields[i] = field.copy(field.name().replace('.', '-'),
+						cleanSchema(field.dataType()), field.nullable(),
+						field.metadata());
+				i++;
+			}
+			return new StructType(fields);
+		} else if (dataType instanceof ArrayType) {
+			return new ArrayType(
+					cleanSchema(((ArrayType) dataType).elementType()),
+					((ArrayType) dataType).containsNull());
+		} else
+			return dataType;
+
 	}
 
 	private static DataFrame retrieveApplicationEvents() {
 		return sqlContext
 				.sql("SELECT Event, `App ID`, Timestamp FROM events WHERE Event LIKE '%ApplicationStart' OR Event LIKE '%ApplicationEnd'");
-	}
-
-	private static DataFrame selectPerformanceInformation(DataFrame stageDetails) {
-		stageDetails.registerTempTable("tmp");
-		DataFrame performanceInfo = sqlContext.sql("SELECT `tmp.Job ID`,"
-				+ "`tmp.JobSubmissionTime`," + "`tmp.JobCompletionTime`,"
-				+ "`tmp.Stage IDs`," + "`tmp.Stage ID`," + "`tmp.Stage Name`,"
-				+ "`tmp.Parent IDs`," + "`tmp.Submission Time`,"
-				+ "`tmp.Completion Time`," + "tmp.computed,"
-				+ "`tmp.stageinfo.Number of Tasks`" + "FROM tmp ");
-
-		return performanceInfo;
 	}
 
 	/**
@@ -285,52 +555,6 @@ public class LoggerParser {
 	}
 
 	/**
-	 * check if thwe output folder is in the local file system
-	 * 
-	 * @return
-	 */
-	private static boolean filesAreLocal() {
-		return !config.outputFolder.startsWith("hdfs");
-
-	}
-
-	/**
-	 * gets the number of jobs in the application, if the job2stagesMap has
-	 * already been initialzied it is used, otherwise the Job ID column in the
-	 * datafram is used
-	 * 
-	 * 
-	 * @param stageDetails
-	 * @return
-	 */
-	private static int getNumberOfJobs(DataFrame stageDetails) {
-		// make ues of the hashmap if it has been filled
-		if (!job2StagesMap.isEmpty())
-			return job2StagesMap.size() - 1;
-
-		// query the dataframe if not
-		int max = 0;
-		for (Row r : stageDetails.select("Job ID").collect())
-			if ((int) r.getLong(0) > max)
-				max = (int) r.getLong(0);
-		logger.info(max + " Jobs found");
-		return max;
-	}
-
-	/**
-	 * retrieves the number of stages if the stage2job map has been initialized
-	 * it is used, otherwise the number of rows in the dataframe is used
-	 * 
-	 * @param stageDetails
-	 * @return
-	 */
-	private static int getNumberOfStages(DataFrame stageDetails) {
-		if (!stage2jobMap.isEmpty())
-			return stage2jobMap.size() - 1;
-		return (int) stageDetails.count();
-	}
-
-	/**
 	 * collects the information the RDDs (id, name, parents, scope, number of
 	 * partitions) by looking into the "jobs" table
 	 * 
@@ -338,8 +562,8 @@ public class LoggerParser {
 	 */
 	private static DataFrame retrieveRDDInformation() {
 
-		DataFrame rdd = sqlContext
-				.sql("SELECT `stageinfo.Stage ID`, "
+		return sqlContext
+				.sql("SELECT `Stage Info.Stage ID`, "
 						+ "`RDDInfo.RDD ID`,"
 						+ "RDDInfo.Name,"
 						+ "RDDInfo.Scope,"
@@ -354,58 +578,65 @@ public class LoggerParser {
 						+ "`RDDInfo.Memory Size`,"
 						+ "`RDDInfo.ExternalBlockStore Size`,"
 						+ "`RDDInfo.Disk Size`"
-						+ "FROM jobs LATERAL VIEW explode(`stageinfo.RDD Info`) rddInfoTable AS RDDInfo");
+						+ " FROM events LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo"
+						+ " WHERE Event LIKE '%StageCompleted'");
 
-		return rdd;
 	}
 
 	/**
 	 * gets a list of stages from the dataframe
 	 * 
 	 * @param stageDetails
+	 *            - The collected dataframe containing stages details
+	 * @param stageDetailsColumns
+	 *            - The columns of stageDetails
+	 * @param jobDetails
+	 *            - The collected dataframe containing jobs details
+	 * @param jobDetailsColumns
+	 *            - The columns of job Details
 	 * @return
 	 */
-	private static List<Stage> extractStages(DataFrame stageDetails) {
-		List<Stage> stages = new ArrayList<Stage>();
-		DataFrame table = null;
-		if (config.filterExecutedStages)
-			table = stageDetails.select("Job ID", "Stage ID", "Parent IDs",
-					"Stage Name", "computed").orderBy("Job ID", "Stage ID");
-		else
-			table = stageDetails.select("Job ID", "Stage ID", "Parent IDs",
-					"Stage Name").orderBy("Job ID", "Stage ID");
+	@SuppressWarnings("unchecked")
+	private static List<Stagenode> extractStageNodes(List<Row> stageDetails,
+			List<String> stageColumns) {
+		List<Stagenode> stages = new ArrayList<Stagenode>();
 
-		for (Row row : table.distinct().collectAsList()) {
+		for (Row row : stageDetails) {
 			List<Long> tmpParentList = null;
 			List<Integer> parentList = null;
-			if (row.get(2) instanceof scala.collection.immutable.List<?>)
+			if (row.get(stageColumns.indexOf("Parent IDs")) instanceof scala.collection.immutable.List<?>)
 				tmpParentList = JavaConversions.asJavaList((Seq<Long>) row
-						.get(2));
-			else if (row.get(2) instanceof ArrayBuffer<?>)
+						.get(stageColumns.indexOf("Parent IDs")));
+			else if (row.get(stageColumns.indexOf("Parent IDs")) instanceof ArrayBuffer<?>)
 				tmpParentList = JavaConversions
-						.asJavaList((ArrayBuffer<Long>) row.get(2));
+						.asJavaList((ArrayBuffer<Long>) row.get(stageColumns
+								.indexOf("Parent IDs")));
 			else {
 				logger.warn("Could not parse Stage Parent IDs Serialization:"
-						+ row.get(2).toString() + " class: "
-						+ row.get(2).getClass() + " Object: " + row.get(2));
+						+ row.get(stageColumns.indexOf("Parent IDs"))
+								.toString()
+						+ " class: "
+						+ row.get(stageColumns.indexOf("Parent IDs"))
+								.getClass() + " Object: "
+						+ row.get(stageColumns.indexOf("Parent IDs")));
 			}
 
 			parentList = new ArrayList<Integer>();
 			for (Long parent : tmpParentList)
 				parentList.add(parent.intValue());
-			Stage stage = null;
-			if (config.filterExecutedStages)
-				stage = new Stage((int) row.getLong(0), (int) row.getLong(1),
-						parentList, row.getString(3), row.getBoolean(4));
-			else
-				stage = new Stage((int) row.getLong(0), (int) row.getLong(1),
-						parentList, row.getString(3), false);
+			Stagenode stage = null;
 
+			int stageId = (int) row.getLong(stageColumns.indexOf("Stage ID"));
+
+			stage = new Stagenode(stage2jobMap.get(stageId), stageId,
+					parentList, row.getString(stageColumns
+							.indexOf("Stage Name")), Boolean.parseBoolean(row
+							.getString(stageColumns.indexOf("Executed"))));
 			stages.add(stage);
 
 		}
 
-		logger.info(stages.size() + "Stagess found");
+		logger.info(stages.size() + "Stages found");
 		return stages;
 	}
 
@@ -415,8 +646,9 @@ public class LoggerParser {
 	 * @param stageDetails
 	 * @return list of RDDs
 	 */
-	private static List<RDD> extractRDDs(DataFrame rddDetails) {
-		List<RDD> rdds = new ArrayList<RDD>();
+	@SuppressWarnings("unchecked")
+	private static List<RDDnode> extractRDDs(DataFrame rddDetails) {
+		List<RDDnode> rdds = new ArrayList<RDDnode>();
 
 		DataFrame table = rddDetails.select("RDD ID", "Parent IDs", "Name",
 				"Scope", "Number of Partitions", "Stage ID", "Use Disk",
@@ -449,7 +681,7 @@ public class LoggerParser {
 				scopeName = scopeObject.get("name").getAsString();
 			}
 
-			rdds.add(new RDD((int) row.getLong(0), row.getString(2),
+			rdds.add(new RDDnode((int) row.getLong(0), row.getString(2),
 					parentList, scopeID, (int) row.getLong(4), scopeName,
 					(int) row.getLong(5), row.getBoolean(6), row.getBoolean(7),
 					row.getBoolean(8), row.getBoolean(9), (int) row.getLong(10)));
@@ -459,36 +691,25 @@ public class LoggerParser {
 	}
 
 	/**
-	 * convenience method to print all the rdd graph
-	 * 
-	 * @param dag
-	 * @throws IOException
-	 */
-	private static void printRDDGraph(DirectedAcyclicGraph<RDD, DefaultEdge> dag)
-			throws IOException {
-		printRDDGraph(dag, -1, -1);
-	}
-
-	/**
 	 * saves the dag it into a .dot file that can be used for visualization
 	 * 
 	 * @param dag
 	 * @throws IOException
 	 */
 	private static void printRDDGraph(
-			DirectedAcyclicGraph<RDD, DefaultEdge> dag, int jobNumber,
+			DirectedAcyclicGraph<RDDnode, DefaultEdge> dag, int jobNumber,
 			int stageNumber) throws IOException {
 
-		DOTExporter<RDD, DefaultEdge> exporter = new DOTExporter<RDD, DefaultEdge>(
-				new VertexNameProvider<RDD>() {
+		DOTExporter<RDDnode, DefaultEdge> exporter = new DOTExporter<RDDnode, DefaultEdge>(
+				new VertexNameProvider<RDDnode>() {
 
-					public String getVertexName(RDD rdd) {
+					public String getVertexName(RDDnode rdd) {
 						return STAGE_LABEL + rdd.getStageID() + RDD_LABEL
 								+ rdd.getId();
 					}
-				}, new VertexNameProvider<RDD>() {
+				}, new VertexNameProvider<RDDnode>() {
 
-					public String getVertexName(RDD rdd) {
+					public String getVertexName(RDDnode rdd) {
 						return rdd.getName() + " (" + rdd.getStageID() + ","
 								+ rdd.getId() + ") ";
 					}
@@ -503,10 +724,11 @@ public class LoggerParser {
 
 						return null;
 					}
-				}, new ComponentAttributeProvider<RDD>() {
+				}, new ComponentAttributeProvider<RDDnode>() {
 
 					@Override
-					public Map<String, String> getComponentAttributes(RDD rdd) {
+					public Map<String, String> getComponentAttributes(
+							RDDnode rdd) {
 						Map<String, String> map = new LinkedHashMap<String, String>();
 						if (rdd.isUseMemory()) {
 							map.put("style", "filled");
@@ -539,17 +761,6 @@ public class LoggerParser {
 	}
 
 	/**
-	 * shorthand to build the dag over all the stages
-	 * 
-	 * @param rdds
-	 * @return
-	 */
-	private static DirectedAcyclicGraph<RDD, DefaultEdge> buildRDDDag(
-			List<RDD> rdds) {
-		return buildRDDDag(rdds, -1, -1);
-	}
-
-	/**
 	 * Build the DAG with RDD as nodes and Parent relationship as edges. job and
 	 * stage number canbe used to specify the context of the DAG
 	 * 
@@ -562,16 +773,17 @@ public class LoggerParser {
 	 *            values to use RDDs from all the stages)
 	 * @return
 	 */
-	private static DirectedAcyclicGraph<RDD, DefaultEdge> buildRDDDag(
-			List<RDD> rdds, int jobNumber, int stageNumber) {
+	private static DirectedAcyclicGraph<RDDnode, DefaultEdge> buildRDDDag(
+			List<RDDnode> rdds, int jobNumber, int stageNumber) {
 
-		DirectedAcyclicGraph<RDD, DefaultEdge> dag = new DirectedAcyclicGraph<RDD, DefaultEdge>(
+		DirectedAcyclicGraph<RDDnode, DefaultEdge> dag = new DirectedAcyclicGraph<RDDnode, DefaultEdge>(
 				DefaultEdge.class);
 
 		// build an hashmap to look for rdds quickly
 		// add vertexes to the graph
-		HashMap<Integer, RDD> rddMap = new HashMap<Integer, RDD>(rdds.size());
-		for (RDD rdd : rdds) {
+		HashMap<Integer, RDDnode> rddMap = new HashMap<Integer, RDDnode>(
+				rdds.size());
+		for (RDDnode rdd : rdds) {
 			if ((stageNumber < 0 || rdd.getStageID() == stageNumber)
 					&& (jobNumber < 0 || stage2jobMap.get(rdd.getStageID()) == jobNumber)) {
 				if (!rddMap.containsKey(rdd.getId())) {
@@ -587,13 +799,13 @@ public class LoggerParser {
 		// add all edges then
 		// note that we are ignoring edges going outside of the context (stage
 		// or job)
-		for (RDD rdd : dag.vertexSet()) {
+		for (RDDnode rdd : dag.vertexSet()) {
 			if (rdd.getParentIDs() != null)
 				for (Integer source : rdd.getParentIDs()) {
 					if (dag.vertexSet().contains(rddMap.get(source))) {
 						logger.debug("Adding link from RDD " + source
 								+ "to RDD" + rdd.getId());
-						RDD sourceRdd = rddMap.get(source);
+						RDDnode sourceRdd = rddMap.get(source);
 						if (!dag.containsEdge(sourceRdd, rdd)) {
 							dag.addEdge(sourceRdd, rdd);
 							Map<String, Integer> map = new LinkedHashMap<>();
@@ -620,7 +832,8 @@ public class LoggerParser {
 	 * @throws IOException
 	 */
 	private static void printStageGraph(
-			DirectedAcyclicGraph<Stage, DefaultEdge> dag) throws IOException {
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag)
+			throws IOException {
 		printStageGraph(dag, -1);
 
 	}
@@ -634,26 +847,26 @@ public class LoggerParser {
 	 * @throws IOException
 	 */
 	private static void printStageGraph(
-			DirectedAcyclicGraph<Stage, DefaultEdge> dag, int jobNumber)
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag, int jobNumber)
 			throws IOException {
 
-		DOTExporter<Stage, DefaultEdge> exporter = new DOTExporter<Stage, DefaultEdge>(
-				new VertexNameProvider<Stage>() {
-					public String getVertexName(Stage stage) {
+		DOTExporter<Stagenode, DefaultEdge> exporter = new DOTExporter<Stagenode, DefaultEdge>(
+				new VertexNameProvider<Stagenode>() {
+					public String getVertexName(Stagenode stage) {
 						return JOB_LABEL + stage.getJobId() + STAGE_LABEL
 								+ stage.getId();
 					}
-				}, new VertexNameProvider<Stage>() {
+				}, new VertexNameProvider<Stagenode>() {
 
-					public String getVertexName(Stage stage) {
+					public String getVertexName(Stagenode stage) {
 						return JOB_LABEL + stage.getJobId() + " " + STAGE_LABEL
 								+ stage.getId();
 					}
-				}, null, new ComponentAttributeProvider<Stage>() {
+				}, null, new ComponentAttributeProvider<Stagenode>() {
 
 					@Override
 					public Map<String, String> getComponentAttributes(
-							Stage stage) {
+							Stagenode stage) {
 						Map<String, String> map = new LinkedHashMap<String, String>();
 						if (stage.isExecuted()) {
 							map.put("style", "filled");
@@ -667,11 +880,11 @@ public class LoggerParser {
 					public Map<String, String> getComponentAttributes(
 							DefaultEdge edge) {
 						Map<String, String> map = new LinkedHashMap<String, String>();
-						if (edge.getSource() instanceof Stage
-								&& ((Stage) edge.getSource()).isExecuted())
+						if (edge.getSource() instanceof Stagenode
+								&& ((Stagenode) edge.getSource()).isExecuted())
 							map.put("color", "red");
-						if (edge.getTarget() instanceof Stage
-								&& ((Stage) edge.getTarget()).isExecuted())
+						if (edge.getTarget() instanceof Stagenode
+								&& ((Stagenode) edge.getTarget()).isExecuted())
 							map.put("color", "red");
 						return map;
 					}
@@ -691,103 +904,66 @@ public class LoggerParser {
 	}
 
 	/**
-	 * Retrieves the information for stages
-	 * 
-	 * @throws UnsupportedEncodingException
-	 * @throws IOException
-	 */
+	 * Retireves a Dataframe with the following columns: Stage ID, Stage Name,
+	 * Parent IDs, Submission Time, Completion Time, Duration, Number of Tasks,
+	 * Executed
+	 * */
 	private static DataFrame retrieveStageInformation()
 			throws UnsupportedEncodingException, IOException {
 
-		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%JobStart'")
-				.registerTempTable("jobs");
-		sqlContext.sql(
-				"SELECT * FROM events WHERE Event LIKE '%StageCompleted'")
-				.registerTempTable("stageComputed");
+		sqlContext
+				.sql("SELECT `Stage Info.Stage ID`,"
+						+ "`Stage Info.Stage Name`,"
+						+ "`Stage Info.Parent IDs`,"
+						+ "`Stage Info.Number of Tasks`,"
+						+ "`Stage Info.Submission Time`,"
+						+ "`Stage Info.Completion Time`,"
+						+ "`Stage Info.Completion Time` - `Stage Info.Submission Time` as Duration,"
+						+ "'True' as Executed"
+						+ " FROM events WHERE Event LIKE '%StageCompleted'")
+				.registerTempTable("ExecutedStages");
 
-		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%JobEnd'")
-				.registerTempTable("jobEnd");
-
-		sqlContext.sql(
-				"SELECT  `Job ID`," + "`Stage Infos`," + "`Stage IDs`,"
-						+ "`Submission Time` AS JobSubmissionTime "
-						+ "FROM jobs ").registerTempTable("jobs");
-
-		retrieveInitialAndFinalStage();
-
-		DataFrame stageDetails = sqlContext
-				.sql("SELECT  *,"
-						+ "`StageInfo.Stage ID`,"
+		sqlContext
+				.sql("SELECT `StageInfo.Stage ID`,"
 						+ "`StageInfo.Stage Name`,"
-						+ "`StageInfo.Parent IDs`"
-						+ "FROM jobs LATERAL VIEW explode(`Stage Infos`) stageInfosTable AS StageInfo");
+						+ "`StageInfo.Parent IDs`,"
+						+ "`StageInfo.Number of Tasks`,"
+						+ "'0' as `Submission Time`,"
+						+ "'0' as `Completion Time`,"
+						+ "'0' as Duration,"
+						+ "'False' as Executed"
+						+ " FROM events LATERAL VIEW explode(`Stage Infos`) stageInfosTable AS `StageInfo`"
+						+ " WHERE Event LIKE '%JobStart'").registerTempTable(
+						"AllStages");
 
-		if (config.filterExecutedStages) {
-			stageDetails.registerTempTable("jobs");
+		sqlContext
+				.sql("SELECT AllStages.* "
+						+ "	FROM AllStages"
+						+ "	LEFT JOIN ExecutedStages ON `AllStages.Stage ID`=`ExecutedStages.Stage ID`"
+						+ "	WHERE `ExecutedStages.Stage ID` IS  NULL")
+				.registerTempTable("NonExecutedStages");
 
-			sqlContext.sql(
-					"SELECT jobs.*, "
-							+ "`jobEnd.Completion Time` AS JobCompletionTime "
-							+ "FROM jobs  " + "JOIN jobEnd "
-							+ "ON `jobEnd.Job ID` = `jobs.Job ID` ")
-					.registerTempTable("jobs");
-
-			// To get the stages actually computed in the jobs table DataFrame
-			stageDetails = sqlContext
-					.sql("SELECT `jobs.Job ID`,"
-							+ "jobs.JobSubmissionTime,"
-							+ "jobs.JobCompletionTime,"
-							+ "`jobs.Stage IDs`,"
-							+ "`jobs.minStageID`,"
-							+ "`jobs.maxStageID`,"
-							+ "`jobs.Stage ID`,"
-							+ "`jobs.Stage Name`,"
-							+ "`jobs.Parent IDs`,"
-							+ "`jobs.stageinfo`,"
-							+ "`stageComputed.Stage Info.Submission Time`,"
-							+ "`stageComputed.Stage Info.Completion Time`,"
-							+ "CASE  "
-							+ "WHEN `stageComputed.Stage Info.Completion Time` IS NOT NULL THEN true "
-							+ "WHEN `stageComputed.Stage Info.Completion Time` IS NULL THEN false "
-							+ "END AS computed "
-							+ "FROM jobs "
-							+ "LEFT JOIN stageComputed "
-							+ "ON `stageComputed.Stage Info.Stage ID` = `jobs.Stage ID`");
-		}
-
-		return stageDetails;
+		return sqlContext.sql("SELECT * " + "	FROM ExecutedStages"
+				+ "	UNION ALL" + "	SELECT *" + "	FROM NonExecutedStages");
 
 	}
 
-	/**
-	 * Initialize the extendedJobStartInfos by selecting all the events that end
-	 * with "Jobstart" label and adding two columns containing the m inimum and
-	 * maximum stage id numbers for the job (operates modifying the "jobs"
-	 * table)
-	 */
-	private static void retrieveInitialAndFinalStage() {
-		// 1a) create a temporary table expanding the Stage IDs column (it
-		// contains an array)
-		sqlContext
-				.sql("SELECT `Job ID`, "
-						+ "expandedStageIds "
-						+ "FROM jobs LATERAL VIEW explode(`Stage IDs`) stageInfoTable AS expandedStageIds")
-				.registerTempTable("JobID2StageID");
-		// 1b) get the maximum and minimum from the expanded table
-		// could not do in one query because hive does not support
-		// min(explode())) notation
-		sqlContext.sql(
-				"SELECT `Job ID`, " + "MIN(expandedStageIds) AS minStageID, "
-						+ "MAX(expandedStageIds) maxStageID "
-						+ "FROM JobID2StageID " + "GROUP BY `Job ID`")
-				.registerTempTable("JobStageBoundaries");
-		// 2) Add the min and max columns to the start job table
-		sqlContext.sql(
-				"SELECT jobs.*, " + "JobStageBoundaries.minStageID,"
-						+ "JobStageBoundaries.maxStageID " + "FROM jobs "
-						+ "JOIN JobStageBoundaries "
-						+ "ON `jobs.Job ID`=`JobStageBoundaries.Job ID`")
-				.registerTempTable("jobs");
+	private static DataFrame retrieveJobInformation()
+			throws UnsupportedEncodingException, IOException {
+
+		return sqlContext
+				.sql("SELECT `s.Job ID`,"
+						+ "`s.Submission Time`,"
+						+ "`e.Completion Time`,"
+						+ "`e.Completion Time` - `s.Submission Time` as Duration,"
+						+ "`s.Stage IDs`,"
+						+ "max(prova) as maxStageID,"
+						+ "min(prova) as minStageID"
+						+ " FROM events s LATERAL VIEW explode(`s.Stage IDs`) idsTable as prova"
+						+ "	INNER JOIN events e ON s.`Job ID`=e.`Job ID`"
+						+ "	WHERE s.Event LIKE '%JobStart' AND e.Event LIKE '%JobEnd'"
+						+ "GROUP BY `s.Job ID`,`s.Submission Time`,`e.Completion Time`,`s.Stage IDs`");
+
 	}
 
 	/**
@@ -840,8 +1016,6 @@ public class LoggerParser {
 						+ "		FROM taskStartInfos AS start"
 						+ "		JOIN taskEndInfos AS finish"
 						+ "		ON `start.Task Info.Task ID`=`finish.Task Info.Task ID`");
-		// register the result as a table
-		taskDetails.registerTempTable("tasks");
 		return taskDetails;
 	}
 
@@ -901,77 +1075,21 @@ public class LoggerParser {
 	}
 
 	/**
-	 * Builds a 2 level DAG where the fist level is composed by jobs and the
-	 * second level is composed by stages (not sure if this is really useful..)
-	 * 
-	 * @param stages
-	 * @return
-	 */
-	@Deprecated
-	private static DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>, DefaultEdge> buildApplicationDag(
-			List<Stage> stages) {
-		DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>, DefaultEdge> dag = new DirectedAcyclicGraph<DirectedAcyclicGraph<Stage, DefaultEdge>, DefaultEdge>(
-				DefaultEdge.class);
-
-		// build an hashmap to look for stages quickly
-		// and add vertexes to the graph
-		Map<Integer, HashMap<Integer, Stage>> jobStageMap = new HashMap<Integer, HashMap<Integer, Stage>>();
-		Map<Integer, DirectedAcyclicGraph<Stage, DefaultEdge>> jobDagMap = new HashMap<Integer, DirectedAcyclicGraph<Stage, DefaultEdge>>();
-		for (Stage stage : stages) {
-			if (!jobStageMap.containsKey(stage.getJobId()))
-				jobStageMap
-						.put(stage.getJobId(), new HashMap<Integer, Stage>());
-			jobStageMap.get(stage.getJobId()).put(stage.getId(), stage);
-		}
-
-		for (Integer job : jobStageMap.keySet()) {
-			logger.debug("Adding job " + job + " to the graph");
-			DirectedAcyclicGraph<Stage, DefaultEdge> jobDag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
-					DefaultEdge.class);
-			jobDagMap.put(job, jobDag);
-			// add vertixes to the job dag
-			for (Integer stageId : jobStageMap.get(job).keySet()) {
-				logger.debug("Adding Stage " + stageId + " of Job " + job
-						+ " to the graph");
-				jobDag.addVertex(jobStageMap.get(job).get(stageId));
-			}
-
-			// add edges to the jobdag
-			for (Integer stageId : jobStageMap.get(job).keySet()) {
-				Stage stage = jobStageMap.get(job).get(stageId);
-				if (stage.getParentIDs() != null)
-					for (Integer source : stage.getParentIDs()) {
-						logger.debug("Adding link from Stage " + source
-								+ "to Stage" + stage.getId());
-						jobDag.addEdge(jobStageMap.get(job).get(source), stage);
-					}
-			}
-			dag.addVertex(jobDag);
-
-			// connecte linearly the upper level
-			if (jobStageMap.containsKey(job - 1.0))
-				dag.addEdge(jobDagMap.get(job - 1.0), jobDag);
-		}
-
-		return dag;
-	}
-
-	/**
 	 * Builds a DAG using all the stages in the provided list.
 	 * 
 	 * @param stages
 	 * @return
 	 */
-	private static DirectedAcyclicGraph<Stage, DefaultEdge> buildStageDag(
-			List<Stage> stages) {
-		DirectedAcyclicGraph<Stage, DefaultEdge> dag = new DirectedAcyclicGraph<Stage, DefaultEdge>(
+	private static DirectedAcyclicGraph<Stagenode, DefaultEdge> buildStageDag(
+			List<Stagenode> stages) {
+		DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = new DirectedAcyclicGraph<Stagenode, DefaultEdge>(
 				DefaultEdge.class);
 
 		// build an hashmap to look for stages quickly
 		// and add vertexes to the graph
-		HashMap<Integer, Stage> stageMap = new HashMap<Integer, Stage>(
+		HashMap<Integer, Stagenode> stageMap = new HashMap<Integer, Stagenode>(
 				stages.size());
-		for (Stage stage : stages) {
+		for (Stagenode stage : stages) {
 			stageMap.put(stage.getId(), stage);
 			logger.debug("Adding Stage " + stage.getId() + " to the graph");
 			dag.addVertex(stage);
@@ -979,7 +1097,7 @@ public class LoggerParser {
 		}
 
 		// add all edges then
-		for (Stage stage : stages) {
+		for (Stagenode stage : stages) {
 			if (stage.getParentIDs() != null)
 				for (Integer source : stage.getParentIDs()) {
 					logger.debug("Adding link from Stage " + source
@@ -998,10 +1116,10 @@ public class LoggerParser {
 	 * @param stageNumber
 	 * @return
 	 */
-	private static DirectedAcyclicGraph<Stage, DefaultEdge> buildStageDag(
-			List<Stage> stages, int jobNumber) {
-		List<Stage> jobStages = new ArrayList<Stage>();
-		for (Stage s : stages)
+	private static DirectedAcyclicGraph<Stagenode, DefaultEdge> buildStageDag(
+			List<Stagenode> stages, int jobNumber) {
+		List<Stagenode> jobStages = new ArrayList<Stagenode>();
+		for (Stagenode s : stages)
 			if ((int) s.getJobId() == jobNumber)
 				jobStages.add(s);
 		return buildStageDag(jobStages);

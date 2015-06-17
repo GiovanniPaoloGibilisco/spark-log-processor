@@ -1,6 +1,6 @@
 package it.polimi.spark.estimator;
 
-import it.polimi.spark.dag.Stage;
+import it.polimi.spark.dag.Stagenode;
 
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -50,10 +50,10 @@ public class Estimator {
 		}
 
 		// load the dags
-		Map<String, DirectedAcyclicGraph<Stage, DefaultEdge>> stageDags = new LinkedHashMap<String, DirectedAcyclicGraph<Stage, DefaultEdge>>();
+		Map<String, DirectedAcyclicGraph<Stagenode, DefaultEdge>> stageDags = new LinkedHashMap<String, DirectedAcyclicGraph<Stagenode, DefaultEdge>>();
 		if (inputFolder.toFile().isFile()) {
 			logger.info("Input folder is actually a file, processing only that file");
-			DirectedAcyclicGraph<Stage, DefaultEdge> dag = deserializeFile(inputFolder);
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = deserializeFile(inputFolder);
 			if (dag != null)
 				stageDags.put(inputFolder.getFileName().toString(), dag);
 		} else {
@@ -65,7 +65,7 @@ public class Estimator {
 					// or
 					// delegate it to the deserialization function
 					logger.debug("loading " + file.getFileName() + " dag");
-					DirectedAcyclicGraph<Stage, DefaultEdge> dag = deserializeFile(file);
+					DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = deserializeFile(file);
 					if (dag != null)
 						stageDags.put(file.getFileName().toString(), dag);
 				}
@@ -75,7 +75,7 @@ public class Estimator {
 		// show some infos
 		logger.info("Loaded " + stageDags.size() + " dags");
 		for (String dagName : stageDags.keySet()) {
-			DirectedAcyclicGraph<Stage, DefaultEdge> dag = stageDags
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = stageDags
 					.get(dagName);
 			logger.info("Dag " + dagName + " has: " + dag.vertexSet().size()
 					+ " vertexes and " + dag.edgeSet().size() + " edges");
@@ -142,10 +142,10 @@ public class Estimator {
 
 		for (String dagName : stageDags.keySet()) {
 			int jobId = Integer.decode(dagName.split("Job_")[1]);
-			DirectedAcyclicGraph<Stage, DefaultEdge> dag = stageDags
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = stageDags
 					.get(dagName);
-			Stage finalStage = null;
-			for (Stage stage : dag.vertexSet()) {
+			Stagenode finalStage = null;
+			for (Stagenode stage : dag.vertexSet()) {
 				if (dag.outDegreeOf(stage) == 0) {
 					finalStage = stage;
 					break;
@@ -188,14 +188,14 @@ public class Estimator {
 	 * @throws IOException
 	 * @throws ClassNotFoundException
 	 */
-	private static DirectedAcyclicGraph<Stage, DefaultEdge> deserializeFile(
+	private static DirectedAcyclicGraph<Stagenode, DefaultEdge> deserializeFile(
 			Path file) throws IOException, ClassNotFoundException {
 		InputStream fileIn = Files.newInputStream(file);
-		DirectedAcyclicGraph<Stage, DefaultEdge> dag = null;
+		DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = null;
 		ObjectInputStream in = null;
 		try {
 			in = new ObjectInputStream(fileIn);
-			dag = (DirectedAcyclicGraph<Stage, DefaultEdge>) in.readObject();
+			dag = (DirectedAcyclicGraph<Stagenode, DefaultEdge>) in.readObject();
 		} catch (StreamCorruptedException e) {
 			logger.warn("file "
 					+ file.getFileName()
@@ -223,8 +223,8 @@ public class Estimator {
 	private static long estimateJobDuration(
 			// TODO: find a smarter way to do this by saving partial
 			// computations, perform branch pruning or some other tricks.
-			DirectedAcyclicGraph<Stage, DefaultEdge> dag,
-			Map<Integer, Long> stageDuration, Stage finalStage) {
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag,
+			Map<Integer, Long> stageDuration, Stagenode finalStage) {
 
 		// default case, if the stage does not depend on other stages then it is
 		// just its duration

@@ -34,14 +34,17 @@ public class Config implements Serializable {
 		_instance = new Config();
 		commander = new JCommander(_instance, args);
 		logger.info(
-				"Configuration: --inputFile {} --outputFolder {} --runlocal {} --appID {} --applicationDAG {} --jobDAGs {} --executedStages {} --stageRdds {} --jobRdds {} --task {} --usage {} --export {}",
+				"Configuration: --inputFile {} --outputFolder {} --runlocal {} --appID {} --applicationDAG {} --jobDAGs {} "
+						+ "--executedStages {} --stageRdds {} --jobRdds {} --task {} --usage {} "
+						+ "--export {} --exportToDatabase {} --dbUser {} --dbPassword {} --dbUrl {}",
 				new Object[] { _instance.inputFile, _instance.outputFolder,
 						_instance.runLocal, _instance.applicationID,
 						_instance.ApplicationDAG, _instance.jobDAGS,
 						_instance.filterExecutedStages,
 						_instance.buildStageRDDGraph,
 						_instance.buildJobRDDGraph, _instance.task,
-						_instance.usage, _instance.export });
+						_instance.usage, _instance.export, _instance.toDB,
+						_instance.dbUser, _instance.dbPassword, _instance.dbUrl });
 	}
 
 	@Parameter(names = { "-i", "--inputFile" }, description = "Path to the input file containing the logs, the file must can be in the local file system or on hdfs. Either -i or -app has to be specified")
@@ -79,6 +82,18 @@ public class Config implements Serializable {
 
 	@Parameter(names = { "-e", "--exportDag" }, description = "serializes all produced DAGs as java objects")
 	public boolean export = false;
+
+	@Parameter(names = { "--exportToDatabase" }, description = "Wether to export the results to the Database")
+	public boolean toDB = false;
+
+	@Parameter(names = { "--dbUser" }, description = "Username of the Database to which export the results")
+	public String dbUser;
+
+	@Parameter(names = { "--dbPassword" }, description = "Password of the Database to which export the results")
+	public String dbPassword;
+
+	@Parameter(names = { "--dbUrl" }, description = "Url of the Database to which export the results")
+	public String dbUrl= "jdbc:mysql://minli39.sl.cloud9.ibm.com/SparkBench";	
 
 	public void usage() {
 		StringBuilder builder = new StringBuilder();

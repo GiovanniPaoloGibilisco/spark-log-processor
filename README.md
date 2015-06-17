@@ -20,7 +20,7 @@ Once built has been built can be invoked by using spark-submit script available 
 ## Build
 The tool can be built using Maven with
 
-`mvn clean package`
+`mvn clean package -Dmaven.test.skip=true`
 
 it will generate a fat jar with all the needed dependencies
 

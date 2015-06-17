@@ -147,6 +147,7 @@ public class LoggerParser {
 		// save CSV with performance information
 
 		if (config.task) {
+			logger.info("Retrieving Task information");
 			DataFrame taskDetails = retrieveTaskInformation();
 			saveListToCSV(taskDetails, "TaskDetails.csv");
 		}
@@ -176,6 +177,7 @@ public class LoggerParser {
 			if (config.dbUser != null && config.dbPassword != null) {
 				dbHandler = new DBHandler(config.dbUrl, config.dbUser,
 						config.dbPassword);
+				logger.info("Retrieving Application Information");
 				application = retrieveApplicationConfiguration();
 			}
 		}
@@ -192,6 +194,7 @@ public class LoggerParser {
 				application.setDuration(getDuration(applicationEvents));
 
 			// collect stages from log files
+			logger.info("Retrieving Stage Information");
 			stageDetailsFrame = retrieveStageInformation();
 			saveListToCSV(stageDetailsFrame, "StageDetails.csv");
 			stageDetails = stageDetailsFrame.collectAsList();
@@ -199,6 +202,7 @@ public class LoggerParser {
 					Arrays.asList(stageDetailsFrame.columns()));
 
 			// collect jobs from log files
+			logger.info("Retrieving Job Information");
 			jobDetailsFrame = retrieveJobInformation();
 			saveListToCSV(jobDetailsFrame, "JobDetails.csv");
 			jobDetails = jobDetailsFrame.collectAsList();
@@ -239,12 +243,14 @@ public class LoggerParser {
 		}
 
 		if (config.ApplicationDAG) {
+			logger.info("Building Stage DAG");
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> stageDag = buildStageDag(stageNodes);
 			printStageGraph(stageDag);
 		}
 
 		if (config.jobDAGS) {
 			for (int i = 0; i <= numberOfJobs; i++) {
+				logger.info("Building Job DAG");
 				DirectedAcyclicGraph<Stagenode, DefaultEdge> stageDag = buildStageDag(
 						stageNodes, i);
 				printStageGraph(stageDag, i);
@@ -256,6 +262,7 @@ public class LoggerParser {
 		// This part takes care of functionalities related to rdds
 		List<RDDnode> rdds = null;
 		if (config.buildJobRDDGraph || config.buildStageRDDGraph) {
+			logger.info("Building Retrieving RDD information");
 			DataFrame rddDetails = retrieveRDDInformation();
 			saveListToCSV(rddDetails, "rdd.csv");
 			rdds = extractRDDs(rddDetails);
@@ -263,6 +270,7 @@ public class LoggerParser {
 
 		if (config.buildJobRDDGraph) {
 			for (int i = 0; i <= numberOfJobs; i++) {
+				logger.info("Building RDD Job DAG");
 				DirectedAcyclicGraph<RDDnode, DefaultEdge> rddDag = buildRDDDag(
 						rdds, i, -1);
 				printRDDGraph(rddDag, i, -1);
@@ -274,6 +282,7 @@ public class LoggerParser {
 
 		if (config.buildStageRDDGraph) {
 			// register the current dataframe as jobs table
+			logger.info("Building RDD Stage DAG");
 			for (int i = 0; i <= numberOfStages; i++) {
 				DirectedAcyclicGraph<RDDnode, DefaultEdge> rddDag = buildRDDDag(
 						rdds, -1, i);
@@ -285,7 +294,11 @@ public class LoggerParser {
 
 		}
 
-		if (config.toDB && application != null && dbHandler != null)
+		if (config.toDB && application != null && dbHandler != null) {
+			logger.info("Adding application to the database");
+			logger.info("Cluster name: " + application.getClusterName());
+			logger.info("Application Id: " + application.getAppID());
+			logger.info("Application Name: " + application.getAppName());
 			try {
 				dbHandler.insertBenchmark(application);
 			} catch (SQLException e) {
@@ -293,6 +306,7 @@ public class LoggerParser {
 						"The application could not be added to the database ",
 						e);
 			}
+		}
 		if (dbHandler != null)
 			dbHandler.close();
 	}

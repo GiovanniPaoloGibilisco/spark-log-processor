@@ -305,6 +305,8 @@ public class LoggerParser {
 				logger.warn(
 						"The application could not be added to the database ",
 						e);
+			}finally{
+				saveApplicationInfo(application.getClusterName(), application.getAppID(), application.getAppName(), config.dbUser);
 			}
 		}
 		if (dbHandler != null)
@@ -1085,6 +1087,19 @@ public class LoggerParser {
 			}
 			br.write("\n");
 		}
+		br.close();
+	}
+
+	private static void saveApplicationInfo(String clusterName, String appId,
+			String appName, String dbUser) throws IOException {
+		OutputStream os = hdfs.create(new Path(config.outputFolder,
+				"application.info"));
+		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
+				"UTF-8"));
+		br.write("Cluster name:" + clusterName);
+		br.write("Application Id:" + appId);
+		br.write("Application Name:" + appName);
+		br.write("Database User:" + dbUser);
 		br.close();
 	}
 

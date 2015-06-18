@@ -342,23 +342,23 @@ public class LoggerParser {
 		ArrayList<String> stageSizeColumns = new ArrayList<String>(
 				Arrays.asList(stageSizes.columns()));
 		//we will use this to convert bytes (in the tables) to MBytes
-		float byteToMByteFactor = 1/(1024*2);
+		float byteToMByteFactor = (1024*2);
 		for (Row row : stageSizes.collectAsList()) {
 			int stageID = (int) row
 					.getLong(stageSizeColumns.indexOf("stageID"));
 			Stage stage = stageById.get(stageID);
 			if (!row.isNullAt(stageSizeColumns.indexOf("inputSize")))
 				stage.setInputSize((double) row.getLong(stageSizeColumns
-						.indexOf("inputSize"))*byteToMByteFactor);
+						.indexOf("inputSize"))/byteToMByteFactor);
 			if (!row.isNullAt(stageSizeColumns.indexOf("outputSize")))
 				stage.setOutputSize((double) row.getLong(stageSizeColumns
-						.indexOf("outputSize"))*byteToMByteFactor);
+						.indexOf("outputSize"))/byteToMByteFactor);
 			if (!row.isNullAt(stageSizeColumns.indexOf("shuffleReadSize")))
 				stage.setShuffleReadSize((double) row.getLong(stageSizeColumns
-						.indexOf("shuffleReadSize"))*byteToMByteFactor);
+						.indexOf("shuffleReadSize"))/byteToMByteFactor);
 			if (!row.isNullAt(stageSizeColumns.indexOf("shuffleWriteSize")))
 				stage.setShuffleWriteSize((double) row.getLong(stageSizeColumns
-						.indexOf("shuffleWriteSize"))*byteToMByteFactor);
+						.indexOf("shuffleWriteSize"))/byteToMByteFactor);
 		}
 
 		return;

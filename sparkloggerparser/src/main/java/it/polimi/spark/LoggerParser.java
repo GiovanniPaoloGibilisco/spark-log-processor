@@ -342,7 +342,7 @@ public class LoggerParser {
 		ArrayList<String> stageSizeColumns = new ArrayList<String>(
 				Arrays.asList(stageSizes.columns()));
 		//we will use this to convert bytes (in the tables) to MBytes
-		float byteToMByteFactor = (1024^2);
+		float byteToMByteFactor = (1024*1024);
 		for (Row row : stageSizes.collectAsList()) {
 			int stageID = (int) row
 					.getLong(stageSizeColumns.indexOf("stageID"));

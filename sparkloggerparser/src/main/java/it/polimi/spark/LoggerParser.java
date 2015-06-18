@@ -145,10 +145,10 @@ public class LoggerParser {
 		// stageDetails.show((int) stageDetails.count());
 
 		// save CSV with performance information
-
+		DataFrame taskDetails = null;
 		if (config.task) {
 			logger.info("Retrieving Task information");
-			DataFrame taskDetails = retrieveTaskInformation();
+			taskDetails = retrieveTaskInformation();
 			saveListToCSV(taskDetails, "TaskDetails.csv");
 		}
 
@@ -221,8 +221,12 @@ public class LoggerParser {
 
 				Map<Integer, Stage> stageById = new HashMap<Integer, Stage>(
 						stages.size());
+
 				for (Stage stage : stages)
 					stageById.put(stage.getStageID(), stage);
+
+				if (taskDetails != null)
+					addStageSize(stageById, taskDetails);
 
 				for (Job job : jobs) {
 					// link job to application
@@ -235,6 +239,13 @@ public class LoggerParser {
 							job.addStage(stageById.get(stageId));
 
 				}
+
+				int firstStageID = Integer.MAX_VALUE;
+				for (int id : stageById.keySet())
+					if (id < firstStageID)
+						firstStageID = id;
+				Stage firstStage = stageById.get(firstStageID);				
+				application.setDataSize(firstStage.getInputSize());
 
 			}
 
@@ -298,19 +309,57 @@ public class LoggerParser {
 			logger.info("Adding application to the database");
 			logger.info("Cluster name: " + application.getClusterName());
 			logger.info("Application Id: " + application.getAppID());
-			logger.info("Application Name: " + application.getAppName());
+			logger.info("Application Name: " + application.getAppName());			
 			try {
 				dbHandler.insertBenchmark(application);
 			} catch (SQLException e) {
 				logger.warn(
 						"The application could not be added to the database ",
 						e);
-			}finally{
-				saveApplicationInfo(application.getClusterName(), application.getAppID(), application.getAppName(), config.dbUser);
+			} finally {
+				saveApplicationInfo(application.getClusterName(),
+						application.getAppID(), application.getAppName(),
+						config.dbUser, application.getDataSize());
 			}
 		}
 		if (dbHandler != null)
 			dbHandler.close();
+	}
+
+	private static void addStageSize(Map<Integer, Stage> stageById,
+			DataFrame taskDetails) {
+		taskDetails.registerTempTable("tmp");
+
+		DataFrame stageSizes = sqlContext
+				.sql("SELECT stageID,"
+						+ "sum(resultSize) as outputSize,"
+						+ "sum(shuffleBytesWritten) as shuffleWriteSize,"
+						+ "sum(bytesRead) as inputSize,"
+						+ "sum(shuffleRemoteBytesRead) + sum(shuffleLocalBytesRead) as shuffleReadSize"
+						+ " FROM tmp" + " GROUP BY stageID");
+
+		ArrayList<String> stageSizeColumns = new ArrayList<String>(
+				Arrays.asList(stageSizes.columns()));
+		for (Row row : stageSizes.collectAsList()) {
+			int stageID = (int) row
+					.getLong(stageSizeColumns.indexOf("stageID"));
+			Stage stage = stageById.get(stageID);
+			if (!row.isNullAt(stageSizeColumns.indexOf("inputSize")))
+				stage.setInputSize((double) row.getLong(stageSizeColumns
+						.indexOf("inputSize")));
+			if (!row.isNullAt(stageSizeColumns.indexOf("outputSize")))
+				stage.setOutputSize((double) row.getLong(stageSizeColumns
+						.indexOf("outputSize")));
+			if (!row.isNullAt(stageSizeColumns.indexOf("shuffleReadSize")))
+				stage.setShuffleReadSize((double) row.getLong(stageSizeColumns
+						.indexOf("shuffleReadSize")));
+			if (!row.isNullAt(stageSizeColumns.indexOf("shuffleWriteSize")))
+				stage.setShuffleWriteSize((double) row.getLong(stageSizeColumns
+						.indexOf("shuffleWriteSize")));
+		}
+
+		return;
+
 	}
 
 	/**
@@ -1091,15 +1140,16 @@ public class LoggerParser {
 	}
 
 	private static void saveApplicationInfo(String clusterName, String appId,
-			String appName, String dbUser) throws IOException {
+			String appName, String dbUser, double dataSize) throws IOException {
 		OutputStream os = hdfs.create(new Path(config.outputFolder,
 				"application.info"));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
-		br.write("Cluster name:" + clusterName+"\n");
-		br.write("Application Id:" + appId+"\n");
-		br.write("Application Name:" + appName+"\n");
-		br.write("Database User:" + dbUser+"\n");
+		br.write("Cluster name:" + clusterName + "\n");
+		br.write("Application Id:" + appId + "\n");
+		br.write("Application Name:" + appName + "\n");
+		br.write("Database User:" + dbUser + "\n");
+		br.write("Data Size:" + dataSize+ "\n");
 		br.close();
 	}
 

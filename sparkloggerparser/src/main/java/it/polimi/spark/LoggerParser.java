@@ -1148,11 +1148,11 @@ public class LoggerParser {
 				"application.info"));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
 				"UTF-8"));
-		br.write("Cluster name:" + clusterName + "\n");
-		br.write("Application Id:" + appId + "\n");
-		br.write("Application Name:" + appName + "\n");
-		br.write("Database User:" + dbUser + "\n");
-		br.write("Data Size:" + dataSize+ "\n");
+		br.write("Cluster name;" + clusterName + "\n");
+		br.write("Application Id;" + appId + "\n");
+		br.write("Application Name;" + appName + "\n");
+		br.write("Database User;" + dbUser + "\n");
+		br.write("Data Size;" + dataSize+ "\n");
 		br.close();
 	}
 

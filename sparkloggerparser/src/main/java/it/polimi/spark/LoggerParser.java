@@ -212,7 +212,7 @@ public class LoggerParser {
 			initMaps(stageDetails, stageDetailsColumns, jobDetails,
 					jobDetailsColumns);
 
-			stageNodes = extractStageNodes(stageDetails, stageDetailsColumns);
+			
 			if (config.toDB && application != null) {
 				stages = extractStages(stageDetails, stageDetailsColumns,
 						application.getClusterName(), application.getAppID());
@@ -250,10 +250,10 @@ public class LoggerParser {
 
 			}
 
-			numberOfJobs = jobDetails.size();
-			numberOfStages = stageDetails.size();
+			numberOfJobs = jobDetails.size()-1;
+			numberOfStages = stageDetails.size()-1;
 		}
-
+		stageNodes = extractStageNodes(stageDetails, stageDetailsColumns);
 		if (config.ApplicationDAG) {
 			logger.info("Building Stage DAG");
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> stageDag = buildStageDag(stageNodes);

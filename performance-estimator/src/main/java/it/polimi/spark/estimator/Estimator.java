@@ -13,6 +13,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -34,7 +35,13 @@ public class Estimator {
 	static final Logger logger = LoggerFactory.getLogger(Estimator.class);
 
 	public static void main(String[] args) throws IOException,
-			ClassNotFoundException {
+			ClassNotFoundException, SQLException {
+
+		// calculate the job execution time by completion - submission time
+		long applicationDurationEstimation = 0;
+		Map<Integer, Long> jobDurationEstimation = new HashMap<Integer, Long>();
+		Map<Integer, Long> jobdurationEstimationError = new HashMap<Integer, Long>();
+		Map<Integer, Long> jobDuration = new HashMap<Integer, Long>();
 
 		Config.init(args);
 		config = Config.getInstance();
@@ -81,65 +88,48 @@ public class Estimator {
 					+ " vertexes and " + dag.edgeSet().size() + " edges");
 		}
 
-		// load the performance file
-		Path performanceFile = Paths.get(config.stagePerformanceFile);
-		if (!performanceFile.toFile().exists()) {
-			logger.info("Input folder " + inputFolder + " does not exist");
+		// load stage performance info
+		Path stageInfoFile = Paths.get(config.stagePerformanceFile);
+		if (!stageInfoFile.toFile().exists()) {
+			logger.info("Stage info file" + stageInfoFile + " does not exist");
 			return;
 		}
-		logger.info("loading performance info from "
-				+ performanceFile.getFileName());
-		Reader in = new FileReader(performanceFile.toFile());
-		Iterable<CSVRecord> records = CSVFormat.EXCEL.withHeader().parse(in);
-		Map<Integer, CSVRecord> stagePerformanceInfo = new LinkedHashMap<Integer, CSVRecord>();
-		Map<Integer, Long> stageDurationInfo = new HashMap<Integer, Long>();
-		for (CSVRecord record : records) {
-			int stageId = Integer.decode(record.get("Stage ID"));
-			stagePerformanceInfo.put(stageId, record);
+		logger.info("loading Stage performance info from "
+				+ stageInfoFile.getFileName());
 
+		Reader stageReader = new FileReader(stageInfoFile.toFile());
+		Iterable<CSVRecord> stageRecords = CSVFormat.EXCEL.withHeader().parse(
+				stageReader);
+		Map<Integer, Long> stageDurationInfo = new HashMap<Integer, Long>();
+		for (CSVRecord record : stageRecords) {
+			int stageId = Integer.decode(record.get("Stage ID"));
 			long duration = 0;
 			// if the stage has not been executed its duration is 0
-			if (Boolean.parseBoolean(record.get("computed"))) {
-				long stageSubmissionTime = Long.decode(record
-						.get("Submission Time"));
-				long stageCompletionTime = Long.decode(record
-						.get("Completion Time"));
-				duration = stageCompletionTime - stageSubmissionTime;
+			if (Boolean.parseBoolean(record.get("Executed"))) {
+				duration = Long.decode(record.get("Duration"));
 			}
 			stageDurationInfo.put(stageId, duration);
 		}
+		stageReader.close();
 
-		// calculate the job execution time by completion - submission time
-		Map<Integer, Long> jobCompletionTimes = new HashMap<Integer, Long>();
-		for (CSVRecord stageRecord : stagePerformanceInfo.values()) {
-			int jobId = Integer.decode(stageRecord.get("Job ID"));
-			boolean computed = Boolean
-					.parseBoolean(stageRecord.get("computed"));
-			if (computed && !jobCompletionTimes.containsKey(jobId)) {
-				long submissionTime = Long.decode(stageRecord
-						.get("JobSubmissionTime"));
-				long completionTime = Long.decode(stageRecord
-						.get("JobCompletionTime"));
-				jobCompletionTimes.put(jobId, completionTime - submissionTime);
-			}
+		// Load job performance info
+		Path jobInfoFile = Paths.get(config.jobPerformanceFile);
+		if (!jobInfoFile.toFile().exists()) {
+			logger.info("Job Info File" + jobInfoFile + " does not exist");
+			return;
+		}
+		logger.info("loading Job performance info from "
+				+ jobInfoFile.getFileName());
+		Reader jobReader = new FileReader(jobInfoFile.toFile());
+		Iterable<CSVRecord> jobRecords = CSVFormat.EXCEL.withHeader().parse(
+				jobReader);
+		for (CSVRecord jobRecord : jobRecords) {
+			int jobId = Integer.decode(jobRecord.get("Job ID"));
+			long duration = Long.decode(jobRecord.get("Duration"));
+			jobDuration.put(jobId, duration);
 		}
 
-		long estimatedApplicationExecutionTime = 0;
-		boolean output = true;
-		if (config.outputFile == null) {
-			logger.info("An output file has not been specified or can not be created.");
-			output = false;
-		}
-		CSVPrinter csvFilePrinter = null;
-		FileWriter fileWriter = null;
-		if (output) {
-			fileWriter = new FileWriter(Paths.get(config.outputFile).toFile());
-			CSVFormat format = CSVFormat.DEFAULT.withHeader("Job ID",
-					"Estimated Duration", "Actual Duration", "Error",
-					"Error Percentage");
-			csvFilePrinter = new CSVPrinter(fileWriter, format);
-		}
-
+		// estimate Job durations from Stage Durations
 		for (String dagName : stageDags.keySet()) {
 			int jobId = Integer.decode(dagName.split("Job_")[1]);
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = stageDags
@@ -154,29 +144,89 @@ public class Estimator {
 
 			long estimatedDuration = estimateJobDuration(dag,
 					stageDurationInfo, finalStage);
-			long actualDuration = jobCompletionTimes.get(jobId);
+			long actualDuration = jobDuration.get(jobId);
 			long error = Math.abs(estimatedDuration - actualDuration);
+
+			jobDurationEstimation.put(jobId, estimatedDuration);
+			jobdurationEstimationError.put(jobId, error);
+
 			float errorPercentage = ((float) error / (float) actualDuration) * 100;
 
-			// export and print the output
-			if (output) {
-				csvFilePrinter.printRecord(jobId, estimatedDuration,
-						actualDuration, error, errorPercentage);
-			}
 			logger.info("Job " + jobId + ": expected duration: "
 					+ estimatedDuration + " ms. actual duration "
 					+ actualDuration + " ms. error: " + error
 					+ " error percentage (error/actual): " + errorPercentage
 					+ "%");
-			estimatedApplicationExecutionTime += estimatedDuration;
+
+			// sum up application execution time
+			applicationDurationEstimation += estimatedDuration;
 		}
+
+		boolean output = true;
+		if (config.outputFile == null) {
+			logger.info("An output file has not been specified or can not be created.");
+			output = false;
+		}
+
+		// if specified upload the result to the DB
+		DBHandler dbHandler = null;
+		if (config.toDB) {
+			if (config.dbUser == null)
+				logger.warn("No user name has been specified for the connection with the DB, results will not be uploaded");
+			if (config.dbPassword == null)
+				logger.warn("No password has been specified for the connection with the DB, results will not be uploaded");
+			if (config.clusterName == null)
+				logger.warn("No cluster name has been specified, a cluster name is needed to add applications to the DB");
+			if (config.dbPassword == null)
+				logger.warn("No appId has been specified, a cluster name is needed to add applications to the DB");
+			if (config.dbUser != null && config.dbPassword != null
+					&& config.clusterName != null && config.appId != null) {
+				dbHandler = new DBHandler(config.dbUrl, config.dbUser,
+						config.dbPassword);
+				logger.info("Saving results to the DB");
+
+				dbHandler.updateApplicationExpectedExecutionTime(
+						config.clusterName, config.appId,
+						(double) applicationDurationEstimation);
+
+				for (int jobId : jobDurationEstimation.keySet())
+					dbHandler.updateJobExpectedExecutionTime(
+							config.clusterName, config.appId, jobId,
+							jobDurationEstimation.get(jobId));
+
+				// TODO: add stage estimation
+
+			}
+		}
+
+		// save the output to file
+		CSVPrinter csvFilePrinter = null;
+		FileWriter fileWriter = null;
 		if (output) {
+			fileWriter = new FileWriter(Paths.get(config.outputFile).toFile());
+			CSVFormat format = CSVFormat.DEFAULT.withHeader("Job ID",
+					"Estimated Duration", "Actual Duration", "Error",
+					"Error Percentage");
+			csvFilePrinter = new CSVPrinter(fileWriter, format);
+
+			// export and print the output
+			for (int jobId : jobDuration.keySet()) {
+				csvFilePrinter
+						.printRecord(
+								jobId,
+								jobDurationEstimation.get(jobId),
+								jobDuration.get(jobId),
+								jobdurationEstimationError.get(jobId),
+								((float) jobdurationEstimationError.get(jobId) / (float) jobDuration
+										.get(jobId)) * 100);
+			}
+
 			fileWriter.flush();
 			fileWriter.close();
 			csvFilePrinter.close();
 		}
 		logger.info("Total Estimated Application execution time: "
-				+ estimatedApplicationExecutionTime + " ms.");
+				+ applicationDurationEstimation + " ms.");
 
 	}
 
@@ -195,7 +245,8 @@ public class Estimator {
 		ObjectInputStream in = null;
 		try {
 			in = new ObjectInputStream(fileIn);
-			dag = (DirectedAcyclicGraph<Stagenode, DefaultEdge>) in.readObject();
+			dag = (DirectedAcyclicGraph<Stagenode, DefaultEdge>) in
+					.readObject();
 		} catch (StreamCorruptedException e) {
 			logger.warn("file "
 					+ file.getFileName()

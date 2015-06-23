@@ -212,7 +212,6 @@ public class LoggerParser {
 			initMaps(stageDetails, stageDetailsColumns, jobDetails,
 					jobDetailsColumns);
 
-			
 			if (config.toDB && application != null) {
 				stages = extractStages(stageDetails, stageDetailsColumns,
 						application.getClusterName(), application.getAppID());
@@ -245,13 +244,13 @@ public class LoggerParser {
 					if (id < firstStageID)
 						firstStageID = id;
 				Stage firstStage = stageById.get(firstStageID);
-				//convert MB to GB in the application
-				application.setDataSize(firstStage.getInputSize()/1024);
+				// convert MB to GB in the application
+				application.setDataSize(firstStage.getInputSize() / 1024);
 
 			}
 
-			numberOfJobs = jobDetails.size()-1;
-			numberOfStages = stageDetails.size()-1;
+			numberOfJobs = jobDetails.size() - 1;
+			numberOfStages = stageDetails.size() - 1;
 		}
 		stageNodes = extractStageNodes(stageDetails, stageDetailsColumns);
 		if (config.ApplicationDAG) {
@@ -310,7 +309,7 @@ public class LoggerParser {
 			logger.info("Adding application to the database");
 			logger.info("Cluster name: " + application.getClusterName());
 			logger.info("Application Id: " + application.getAppID());
-			logger.info("Application Name: " + application.getAppName());			
+			logger.info("Application Name: " + application.getAppName());
 			try {
 				dbHandler.insertBenchmark(application);
 			} catch (SQLException e) {
@@ -341,24 +340,24 @@ public class LoggerParser {
 
 		ArrayList<String> stageSizeColumns = new ArrayList<String>(
 				Arrays.asList(stageSizes.columns()));
-		//we will use this to convert bytes (in the tables) to MBytes
-		float byteToMByteFactor = (1024*1024);
+		// we will use this to convert bytes (in the tables) to MBytes
+		float byteToMByteFactor = (1024 * 1024);
 		for (Row row : stageSizes.collectAsList()) {
 			int stageID = (int) row
 					.getLong(stageSizeColumns.indexOf("stageID"));
 			Stage stage = stageById.get(stageID);
 			if (!row.isNullAt(stageSizeColumns.indexOf("inputSize")))
 				stage.setInputSize((double) row.getLong(stageSizeColumns
-						.indexOf("inputSize"))/byteToMByteFactor);
+						.indexOf("inputSize")) / byteToMByteFactor);
 			if (!row.isNullAt(stageSizeColumns.indexOf("outputSize")))
 				stage.setOutputSize((double) row.getLong(stageSizeColumns
-						.indexOf("outputSize"))/byteToMByteFactor);
+						.indexOf("outputSize")) / byteToMByteFactor);
 			if (!row.isNullAt(stageSizeColumns.indexOf("shuffleReadSize")))
 				stage.setShuffleReadSize((double) row.getLong(stageSizeColumns
-						.indexOf("shuffleReadSize"))/byteToMByteFactor);
+						.indexOf("shuffleReadSize")) / byteToMByteFactor);
 			if (!row.isNullAt(stageSizeColumns.indexOf("shuffleWriteSize")))
 				stage.setShuffleWriteSize((double) row.getLong(stageSizeColumns
-						.indexOf("shuffleWriteSize"))/byteToMByteFactor);
+						.indexOf("shuffleWriteSize")) / byteToMByteFactor);
 		}
 
 		return;
@@ -512,6 +511,9 @@ public class LoggerParser {
 		if (columns.contains("spark-app-name"))
 			application.setAppName(row.getString(columns
 					.indexOf("spark-app-name")));
+		if (columns.contains("spark-default-parallelism"))
+			application.setParallelism(Integer.parseInt(row.getString(columns
+					.indexOf("spark-default-parallelism"))));
 
 		if (columns.contains("spark-driver-memory")) {
 			String memory = row.getString(columns
@@ -1152,7 +1154,7 @@ public class LoggerParser {
 		br.write("Application Id;" + appId + "\n");
 		br.write("Application Name;" + appName + "\n");
 		br.write("Database User;" + dbUser + "\n");
-		br.write("Data Size;" + dataSize+ "\n");
+		br.write("Data Size;" + dataSize + "\n");
 		br.close();
 	}
 

@@ -282,8 +282,8 @@ public class DBHandler {
 		values += "'" + rdd.getClusterName() + "'" + ",";
 
 		if (rdd.getName() != null) {
-			insertQuery += "name,";
-			values += rdd.getName() + ",";
+			insertQuery += "rddName,";
+			values += "'" +  rdd.getName()+"'" + ",";
 		}
 
 		if (rdd.getStageID() >= 0) {
@@ -293,7 +293,7 @@ public class DBHandler {
 
 		if (rdd.getScope() != null) {
 			insertQuery += "scope,";
-			values += rdd.getScope().replaceAll(",", ";") + ",";
+			values += "'" +  rdd.getScope()+"'" + ",";
 		}
 
 		insertQuery += "useDisk,";

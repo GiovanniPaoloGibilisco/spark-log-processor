@@ -291,8 +291,11 @@ public class LoggerParser {
 				rdds = extractRDDs(rddDetails, rddDetailsColumns,
 						application.getClusterName(), application.getAppID());
 
-				for (RDD rdd : rdds)
+				for (RDD rdd : rdds){
+					logger.info("Adding to the application RDD: "+rdd.getID()+" "+rdd.getName());
 					application.addRdd(rdd);
+				}
+				
 
 			}
 		}
@@ -479,7 +482,7 @@ public class LoggerParser {
 						.indexOf("Disk Size")) / byteToMByteFactor);
 			
 			//if we are filtering rdds and this one does not use memory or disk then skip it
-			if(config.filterComputedRDDs && !(rdd.isUseDisk() || rdd.isUseMemory()))
+			if(config.filterComputedRDDs && rdd.getMemorySize() + rdd.getDiskSize() == 0)
 				continue;
 			rdds.add(rdd);
 		}

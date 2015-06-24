@@ -14,7 +14,7 @@ public class Stage {
 	private double outputSize;
 	private double shuffleReadSize;
 	private double shuffleWriteSize;
-	private int stageID;
+	private int id;
 	static final Logger logger = LoggerFactory.getLogger(Stage.class);
 
 	/**
@@ -28,7 +28,7 @@ public class Stage {
 		this.clusterName = clusterName;
 		this.appID = appID;
 		this.jobID = jobID;
-		this.stageID = stageID;
+		this.id = stageID;
 	}
 
 	public String getAppID() {
@@ -67,8 +67,8 @@ public class Stage {
 		return shuffleWriteSize;
 	}
 
-	public int getStageID() {
-		return stageID;
+	public int getID() {
+		return id;
 	}
 
 	public void setAppName(String appName) {

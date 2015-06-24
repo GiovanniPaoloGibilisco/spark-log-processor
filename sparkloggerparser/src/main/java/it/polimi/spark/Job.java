@@ -11,7 +11,7 @@ public class Job {
 	private String appID;
 	private String clusterName;
 	private int duration;
-	private int jobID;
+	private int id;
 	static final Logger logger = LoggerFactory.getLogger(Job.class);
 	private List<Stage> stages;
 
@@ -24,7 +24,7 @@ public class Job {
 		super();
 		this.clusterName = clusterName;
 		this.appID = appID;
-		this.jobID = jobID;
+		this.id = jobID;
 		stages = new ArrayList<Stage>();
 	}
 
@@ -40,8 +40,8 @@ public class Job {
 		return duration;
 	}
 
-	public int getJobID() {
-		return jobID;
+	public int getID() {
+		return id;
 	}
 
 	public void setDuration(int duration) {
@@ -51,9 +51,9 @@ public class Job {
 	public void addStage(Stage stage) {
 		if (stage.getClusterName() != getClusterName()
 				|| stage.getAppID() != getAppID()
-				|| stage.getJobID() != getJobID()) {
+				|| stage.getJobID() != getID()) {
 			logger.warn("Trying to add a stage with wrong cluster name, application id or job ID, Skipped stage with id: "
-					+ stage.getStageID());
+					+ stage.getID());
 			return;
 		}
 

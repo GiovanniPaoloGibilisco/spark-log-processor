@@ -76,6 +76,9 @@ public class Config implements Serializable {
 
 	@Parameter(names = { "-es", "--executedStages" }, description = "in the creation of DAGs (either with -a or -j) highlight stages that have been executed")
 	public boolean filterExecutedStages = true;
+	
+	@Parameter(names = { "-er", "--executedRDDs" }, description = "avoid considering RDDs that have not been actually computed")
+	public boolean filterComputedRDDs = true;
 
 	@Parameter(names = { "-u", "--usage" }, description = "print this information screen")
 	public boolean usage = false;

@@ -26,11 +26,13 @@ public class Benchmark {
 	private double storageMemoryFraction;
 	static final Logger logger = LoggerFactory.getLogger(Benchmark.class);
 	private List<Job> jobs;
+	private List<RDD> rdds;
 
 	public Benchmark(String clusterName, String appID) {
 		this.clusterName = clusterName;
 		this.appID = appID;
 		jobs = new ArrayList<Job>();
+		rdds = new ArrayList<RDD>();
 	}
 	
 	public int getDuration() {
@@ -157,7 +159,7 @@ public class Benchmark {
 		if (job.getClusterName() != getClusterName()
 				|| job.getAppID() != getAppID()) {
 			logger.warn("Trying to add a job with wrong cluster name or application id, Skipped Job with id: "
-					+ job.getJobID());
+					+ job.getID());
 			return;
 		}
 
@@ -166,5 +168,19 @@ public class Benchmark {
 
 	public List<Job> getJobs() {
 		return jobs;
+	}
+
+	public void addRdd(RDD rdd) {
+		if (rdd.getClusterName() != getClusterName()
+				|| rdd.getAppID() != getAppID()) {
+			logger.warn("Trying to add an rdd with wrong cluster name or application id, Skipped Rdd with id: "
+					+ rdd.getID());
+			return;
+		}
+
+		rdds.add(rdd);
+	}
+	public List<RDD> getRdds() {
+		return rdds;
 	}
 }

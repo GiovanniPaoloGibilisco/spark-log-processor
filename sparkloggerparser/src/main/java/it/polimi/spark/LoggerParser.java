@@ -62,6 +62,7 @@ public class LoggerParser {
 	static final String RDD_LABEL = "RDD_";
 	static final String APPLICATION_DAG_LABEL = "application-graph";
 	static final String APPLICATION_RDD_LABEL = "application-rdd";
+	static final float byteToMByteFactor = (1024 * 1024);
 	static final String DOT_EXTENSION = ".dot";
 	static Map<Integer, List<Integer>> job2StagesMap = new HashMap<Integer, List<Integer>>();
 	static Map<Integer, Integer> stage2jobMap = new HashMap<Integer, Integer>();
@@ -155,14 +156,19 @@ public class LoggerParser {
 		DataFrame stageDetailsFrame = null;
 		List<Row> stageDetails = null;
 		List<String> stageDetailsColumns = null;
+		List<Stagenode> stageNodes = null;
+		List<Stage> stages = null;
 
 		DataFrame jobDetailsFrame = null;
 		List<Row> jobDetails = null;
 		List<String> jobDetailsColumns = null;
-
-		List<Stagenode> stageNodes = null;
-		List<Stage> stages = null;
 		List<Job> jobs = null;
+
+		DataFrame rddDetailsFrame = null;
+		List<Row> rddDetails = null;
+		List<String> rddDetailsColumns = null;
+		List<RDDnode> rddNodes = null;
+		List<RDD> rdds = null;
 
 		int numberOfJobs = 0;
 		int numberOfStages = 0;
@@ -222,7 +228,7 @@ public class LoggerParser {
 						stages.size());
 
 				for (Stage stage : stages)
-					stageById.put(stage.getStageID(), stage);
+					stageById.put(stage.getID(), stage);
 
 				if (taskDetails != null)
 					addStageSize(stageById, taskDetails);
@@ -232,13 +238,14 @@ public class LoggerParser {
 					application.addJob(job);
 
 					// link stages to jobs
-					for (int stageId : job2StagesMap.get(job.getJobID()))
+					for (int stageId : job2StagesMap.get(job.getID()))
 						// skip non executed
 						if (stageById.containsKey(stageId))
 							job.addStage(stageById.get(stageId));
 
 				}
 
+				/* Old code to get the input size looking at the input size of the first stage
 				int firstStageID = Integer.MAX_VALUE;
 				for (int id : stageById.keySet())
 					if (id < firstStageID)
@@ -246,7 +253,7 @@ public class LoggerParser {
 				Stage firstStage = stageById.get(firstStageID);
 				// convert MB to GB in the application
 				application.setDataSize(firstStage.getInputSize() / 1024);
-
+				 */
 			}
 
 			numberOfJobs = jobDetails.size() - 1;
@@ -271,19 +278,30 @@ public class LoggerParser {
 		}
 
 		// This part takes care of functionalities related to rdds
-		List<RDDnode> rdds = null;
 		if (config.buildJobRDDGraph || config.buildStageRDDGraph) {
 			logger.info("Building Retrieving RDD information");
-			DataFrame rddDetails = retrieveRDDInformation();
-			saveListToCSV(rddDetails, "rdd.csv");
-			rdds = extractRDDs(rddDetails);
+			rddDetailsFrame = retrieveRDDInformation();
+			saveListToCSV(rddDetailsFrame, "rdd.csv");
+			rddDetails = rddDetailsFrame.collectAsList();
+			rddDetailsColumns = new ArrayList<String>(
+					Arrays.asList(rddDetailsFrame.columns()));
+			rddNodes = extractRDDs(rddDetailsFrame);
+
+			if (config.toDB & application != null) {
+				rdds = extractRDDs(rddDetails, rddDetailsColumns,
+						application.getClusterName(), application.getAppID());
+
+				for (RDD rdd : rdds)
+					application.addRdd(rdd);
+
+			}
 		}
 
 		if (config.buildJobRDDGraph) {
 			for (int i = 0; i <= numberOfJobs; i++) {
 				logger.info("Building RDD Job DAG");
 				DirectedAcyclicGraph<RDDnode, DefaultEdge> rddDag = buildRDDDag(
-						rdds, i, -1);
+						rddNodes, i, -1);
 				printRDDGraph(rddDag, i, -1);
 				if (config.export)
 					serializeDag(rddDag, RDD_LABEL + JOB_LABEL
@@ -296,7 +314,7 @@ public class LoggerParser {
 			logger.info("Building RDD Stage DAG");
 			for (int i = 0; i <= numberOfStages; i++) {
 				DirectedAcyclicGraph<RDDnode, DefaultEdge> rddDag = buildRDDDag(
-						rdds, -1, i);
+						rddNodes, -1, i);
 				printRDDGraph(rddDag, stage2jobMap.get(i).intValue(), i);
 				if (config.export)
 					serializeDag(rddDag, RDD_LABEL + JOB_LABEL
@@ -304,6 +322,12 @@ public class LoggerParser {
 			}
 
 		}
+
+		double dataSize = getApplicationDataSize(rdds);
+		logger.info("Application data size: "+dataSize);
+		application.setDataSize(dataSize/1024);
+
+
 
 		if (config.toDB && application != null && dbHandler != null) {
 			logger.info("Adding application to the database");
@@ -326,6 +350,36 @@ public class LoggerParser {
 			dbHandler.close();
 	}
 
+	private static double getApplicationDataSize(List<RDD> rdds) {
+		double size = getInputSizeByRDDName(rdds);
+		if (size < 0)
+			size = getFirstRDDSize(rdds);
+		return size;
+	}
+
+	private static double getFirstRDDSize(List<RDD> rdds) {
+		if (rdds.size() == 0)
+			return -1;
+		RDD firstRDD = rdds.get(0);
+		for(RDD rdd: rdds){
+			double totalSize = rdd.getDiskSize() + rdd.getMemorySize();
+			if (totalSize > 0 && rdd.getID() < firstRDD.getID())
+				firstRDD = rdd;
+		}
+		
+		return firstRDD.getDiskSize() + firstRDD.getMemorySize();
+
+	}
+
+	private static double getInputSizeByRDDName(List<RDD> rdds) {
+		for (RDD rdd : rdds) {
+			double totalSize = rdd.getDiskSize() + rdd.getMemorySize();
+			if (totalSize > 0 && rdd.getName().contains("Input"))
+				return totalSize;
+		}
+		return -1;
+	}
+
 	private static void addStageSize(Map<Integer, Stage> stageById,
 			DataFrame taskDetails) {
 		taskDetails.registerTempTable("tmp");
@@ -341,7 +395,7 @@ public class LoggerParser {
 		ArrayList<String> stageSizeColumns = new ArrayList<String>(
 				Arrays.asList(stageSizes.columns()));
 		// we will use this to convert bytes (in the tables) to MBytes
-		float byteToMByteFactor = (1024 * 1024);
+
 		for (Row row : stageSizes.collectAsList()) {
 			int stageID = (int) row
 					.getLong(stageSizeColumns.indexOf("stageID"));
@@ -386,6 +440,50 @@ public class LoggerParser {
 		}
 		return jobs;
 
+	}
+
+	private static List<RDD> extractRDDs(List<Row> rddDetails,
+			List<String> rddDetailsColumns, String clusterName, String appID) {
+		List<RDD> rdds = new ArrayList<RDD>();
+		for (Row row : rddDetails) {
+			int rddID = (int) row.getLong(rddDetailsColumns.indexOf("RDD ID"));
+			RDD rdd = new RDD(appID, clusterName, rddID);
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Name")))
+				rdd.setName(row.getString(rddDetailsColumns.indexOf("Name")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Scope")))
+				rdd.setScope(row.getString(rddDetailsColumns.indexOf("Scope")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Name")))
+				rdd.setName(row.getString(rddDetailsColumns.indexOf("Name")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Use Disk")))
+				rdd.setUseDisk(row.getBoolean(rddDetailsColumns
+						.indexOf("Use Disk")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Use Memory")))
+				rdd.setUseMemory(row.getBoolean(rddDetailsColumns
+						.indexOf("Use Memory")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Deserialized")))
+				rdd.setDeserialized(row.getBoolean(rddDetailsColumns
+						.indexOf("Deserialized")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Number of Partitions")))
+				rdd.setNumberOfPartitions((int) row.getLong(rddDetailsColumns
+						.indexOf("Number of Partitions")));
+			if (!row.isNullAt(rddDetailsColumns
+					.indexOf("Number of Cached Partitions")))
+				rdd.setNumberOfCachedPartitions((int) row
+						.getLong(rddDetailsColumns
+								.indexOf("Number of Cached Partitions")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Memory Size")))
+				rdd.setMemorySize((double) row.getLong(rddDetailsColumns
+						.indexOf("Memory Size")) / byteToMByteFactor);
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Disk Size")))
+				rdd.setDiskSize((double) row.getLong(rddDetailsColumns
+						.indexOf("Disk Size")) / byteToMByteFactor);
+			
+			//if we are filtering rdds and this one does not use memory or disk then skip it
+			if(config.filterComputedRDDs && !(rdd.isUseDisk() || rdd.isUseMemory()))
+				continue;
+			rdds.add(rdd);
+		}
+		return rdds;
 	}
 
 	/**
@@ -459,7 +557,6 @@ public class LoggerParser {
 						stage2jobMap.get(stageId), stageId);
 				stage.setDuration(Integer.parseInt(row.getString(stageColumns
 						.indexOf("Duration"))));
-				// TODO: add parsing of input/output and shuffle sizes
 				stages.add(stage);
 			}
 		}

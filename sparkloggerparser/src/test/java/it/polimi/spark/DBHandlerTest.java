@@ -36,7 +36,7 @@ public class DBHandlerTest {
 		testApplication.addJob(testJob2);
 		
 		
-		Stage testStage = new Stage(testJob1.getClusterName(), testJob1.getAppID(), testJob1.getJobID(), 1);
+		Stage testStage = new Stage(testJob1.getClusterName(), testJob1.getAppID(), testJob1.getID(), 1);
 		testStage.setInputSize(10.5);
 		testJob1.addStage(testStage);
 			

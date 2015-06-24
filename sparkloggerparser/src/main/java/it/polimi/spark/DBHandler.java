@@ -10,7 +10,7 @@ import org.slf4j.LoggerFactory;
 
 public class DBHandler {
 
-	public static final String DEFAULT_DRIVER = "com.mysql.jdbc.Driver";	
+	public static final String DEFAULT_DRIVER = "com.mysql.jdbc.Driver";
 	String driver = "com.mysql.jdbc.Driver";
 	String url;
 	String user;
@@ -32,6 +32,7 @@ public class DBHandler {
 			succesfulConnection = false;
 		}
 	}
+
 	public DBHandler(String url, String user, String password) {
 		this(DEFAULT_DRIVER, url, user, password);
 	}
@@ -51,6 +52,18 @@ public class DBHandler {
 
 		for (Job job : application.getJobs())
 			insertJob(job);
+
+		for (RDD rdd : application.getRdds())
+			insertRDD(rdd);
+
+	}
+
+	private void insertRDD(RDD rdd) throws SQLException {
+		if (!succesfulConnection) {
+			logger.warn("The initial connection to the database was not succesfull, RDD wil not be added");
+			return;
+		}
+		insertIntoRDDTable(rdd);
 
 	}
 
@@ -181,7 +194,7 @@ public class DBHandler {
 		values += "'" + job.getAppID() + "'" + ",";
 
 		insertQuery += "jobID,";
-		values += job.getJobID() + ",";
+		values += job.getID() + ",";
 
 		if (job.getDuration() > 0) {
 			insertQuery += "duration,";
@@ -215,7 +228,7 @@ public class DBHandler {
 		values += stage.getJobID() + ",";
 
 		insertQuery += "stageID,";
-		values += stage.getStageID() + ",";
+		values += stage.getID() + ",";
 
 		if (stage.getDuration() > 0) {
 			insertQuery += "duration,";
@@ -248,6 +261,76 @@ public class DBHandler {
 		String query = insertQuery + values;
 
 		logger.trace("Sending Query: " + query);
+		// create the mysql insert prepared statement
+		PreparedStatement preparedStmt = conn.prepareStatement(query);
+		// execute the prepared statement
+		preparedStmt.execute();
+
+	}
+
+	private void insertIntoRDDTable(RDD rdd) throws SQLException {
+		String insertQuery = " insert into Stage (";
+		String values = " values (";
+
+		insertQuery += "rddID,";
+		values += "'" + rdd.getID() + "'" + ",";
+
+		insertQuery += "appID,";
+		values += "'" + rdd.getAppID() + "'" + ",";
+
+		insertQuery += "clusterName,";
+		values += "'" + rdd.getClusterName() + "'" + ",";
+
+		if (rdd.getName() != null) {
+			insertQuery += "name,";
+			values += rdd.getName() + ",";
+		}
+
+		if (rdd.getStageID() >= 0) {
+			insertQuery += "stageID,";
+			values += rdd.getStageID() + ",";
+		}
+
+		if (rdd.getScope() != null) {
+			insertQuery += "scope,";
+			values += rdd.getScope() + ",";
+		}
+
+		insertQuery += "useDisk,";
+		values += rdd.isUseDisk() + ",";
+		
+		insertQuery += "useMemory,";
+		values += rdd.isUseMemory() + ",";
+		
+		insertQuery += "deserialized,";
+		values += rdd.isDeserialized() + ",";
+
+		if (rdd.getNumberOfPartitions() >= 0) {
+			insertQuery += "numberOfPartitions,";
+			values += rdd.getNumberOfPartitions() + ",";
+		}
+		
+		if (rdd.getNumberOfCachedPartitions() >= 0) {
+			insertQuery += "cachedPartitions,";
+			values += rdd.getNumberOfCachedPartitions() + ",";
+		}
+
+		if (rdd.getMemorySize() >= 0) {
+			insertQuery += "memorySize,";
+			values += rdd.getMemorySize() + ",";
+		}
+		
+		if (rdd.getDiskSize() >= 0) {
+			insertQuery += "diskSize,";
+			values += rdd.getDiskSize()+ ",";
+		}
+
+		insertQuery = insertQuery.substring(0, insertQuery.length() - 1) + ")";
+		values = values.substring(0, values.length() - 1) + ")";
+
+		String query = insertQuery + values;
+
+		logger.info("Sending Query: " + query);
 		// create the mysql insert prepared statement
 		PreparedStatement preparedStmt = conn.prepareStatement(query);
 		// execute the prepared statement

@@ -269,7 +269,7 @@ public class DBHandler {
 	}
 
 	private void insertIntoRDDTable(RDD rdd) throws SQLException {
-		String insertQuery = " insert into Stage (";
+		String insertQuery = " insert into Rdd (";
 		String values = " values (";
 
 		insertQuery += "rddID,";
@@ -293,7 +293,7 @@ public class DBHandler {
 
 		if (rdd.getScope() != null) {
 			insertQuery += "scope,";
-			values += rdd.getScope() + ",";
+			values += rdd.getScope().replaceAll(",", ";") + ",";
 		}
 
 		insertQuery += "useDisk,";

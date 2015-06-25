@@ -14,10 +14,12 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -281,7 +283,7 @@ public class LoggerParser {
 		if (config.buildJobRDDGraph || config.buildStageRDDGraph) {
 			logger.info("Building Retrieving RDD information");
 			rddDetailsFrame = retrieveRDDInformation();
-			saveListToCSV(rddDetailsFrame, "rdd.csv");
+			saveListToCSV(rddDetailsFrame, "rdd.csv");rddDetailsFrame.show();
 			rddDetails = rddDetailsFrame.collectAsList();
 			rddDetailsColumns = new ArrayList<String>(
 					Arrays.asList(rddDetailsFrame.columns()));
@@ -292,7 +294,7 @@ public class LoggerParser {
 						application.getClusterName(), application.getAppID());
 
 				for (RDD rdd : rdds){
-					logger.info("Adding to the application RDD: "+rdd.getID()+" "+rdd.getName());
+					logger.info("Adding to the application RDD: "+rdd.getID()+" "+rdd.getName());					
 					application.addRdd(rdd);
 				}
 				
@@ -448,6 +450,7 @@ public class LoggerParser {
 	private static List<RDD> extractRDDs(List<Row> rddDetails,
 			List<String> rddDetailsColumns, String clusterName, String appID) {
 		List<RDD> rdds = new ArrayList<RDD>();
+		Set<Integer> rddIds = new HashSet<Integer>(); 
 		for (Row row : rddDetails) {
 			int rddID = (int) row.getLong(rddDetailsColumns.indexOf("RDD ID"));
 			RDD rdd = new RDD(appID, clusterName, rddID);
@@ -484,7 +487,13 @@ public class LoggerParser {
 			//if we are filtering rdds and this one does not use memory or disk then skip it
 			if(config.filterComputedRDDs && rdd.getMemorySize() + rdd.getDiskSize() == 0)
 				continue;
-			rdds.add(rdd);
+			
+			if(!rddIds.contains(rdd.getID())){
+				rddIds.add(rdd.getID());
+				rdds.add(rdd);
+			}
+			
+			
 		}
 		return rdds;
 	}
@@ -732,7 +741,16 @@ public class LoggerParser {
 	 */
 	private static DataFrame retrieveRDDInformation() {
 
-		return sqlContext
+		sqlContext
+		.sql("SELECT regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1) as RddID, "				
+				+ " sum(`blocks.Status.Memory Size`) as `Memory Size`, "
+				+ " count(`blocks.Status.Storage Level.Use Memory`=true) as `Number of Cached Partitions`,"
+				+ " sum(`blocks.Status.Disk Size`) as `Disk Size` "
+				+ " FROM events LATERAL VIEW explode(`Task Metrics.Updated Blocks`) blocksTable AS blocks"
+				+ " WHERE Event LIKE '%TaskEnd' AND `Task Metrics.Updated Blocks` IS NOT NULL"
+				+ "	GROUP BY regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1)").registerTempTable("RDDSizes");
+			
+		sqlContext
 				.sql("SELECT `Stage Info.Stage ID`, "
 						+ "`RDDInfo.RDD ID`,"
 						+ "RDDInfo.Name,"
@@ -744,14 +762,15 @@ public class LoggerParser {
 						+ "`RDDInfo.Storage Level.Deserialized`,"
 						+ "`RDDInfo.Storage Level.Replication`,"
 						+ "`RDDInfo.Number of Partitions`,"
-						+ "`RDDInfo.Number of Cached Partitions`,"
-						+ "`RDDInfo.Memory Size`,"
-						+ "`RDDInfo.ExternalBlockStore Size`,"
-						+ "`RDDInfo.Disk Size`"
+						+ "`RDDInfo.ExternalBlockStore Size`"
 						+ " FROM events LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo"
-						+ " WHERE Event LIKE '%StageCompleted'");
+						+ " WHERE Event LIKE '%StageCompleted'").registerTempTable("RDDInfo");;
 
+		 return sqlContext.sql("SELECT * "
+			 		+ "FROM RDDInfo JOIN RDDSizes ON RddID=`RDD ID`");
 	}
+	
+
 
 	/**
 	 * gets a list of stages from the dataframe

@@ -247,14 +247,14 @@ public class LoggerParser {
 
 				}
 
-				/* Old code to get the input size looking at the input size of the first stage
-				int firstStageID = Integer.MAX_VALUE;
-				for (int id : stageById.keySet())
-					if (id < firstStageID)
-						firstStageID = id;
-				Stage firstStage = stageById.get(firstStageID);
-				// convert MB to GB in the application
-				application.setDataSize(firstStage.getInputSize() / 1024);
+				/*
+				 * Old code to get the input size looking at the input size of
+				 * the first stage int firstStageID = Integer.MAX_VALUE; for
+				 * (int id : stageById.keySet()) if (id < firstStageID)
+				 * firstStageID = id; Stage firstStage =
+				 * stageById.get(firstStageID); // convert MB to GB in the
+				 * application application.setDataSize(firstStage.getInputSize()
+				 * / 1024);
 				 */
 			}
 
@@ -283,21 +283,22 @@ public class LoggerParser {
 		if (config.buildJobRDDGraph || config.buildStageRDDGraph) {
 			logger.info("Building Retrieving RDD information");
 			rddDetailsFrame = retrieveRDDInformation();
-			saveListToCSV(rddDetailsFrame, "rdd.csv");rddDetailsFrame.show();
+			rddNodes = extractRDDs(rddDetailsFrame);
+			saveListToCSV(rddDetailsFrame, "rdd.csv");
+			rddDetailsFrame.show();
 			rddDetails = rddDetailsFrame.collectAsList();
 			rddDetailsColumns = new ArrayList<String>(
 					Arrays.asList(rddDetailsFrame.columns()));
-			rddNodes = extractRDDs(rddDetailsFrame);
 
 			if (config.toDB & application != null) {
 				rdds = extractRDDs(rddDetails, rddDetailsColumns,
 						application.getClusterName(), application.getAppID());
 
-				for (RDD rdd : rdds){
-					logger.info("Adding to the application RDD: "+rdd.getID()+" "+rdd.getName());					
+				for (RDD rdd : rdds) {
+					logger.info("Adding to the application RDD: " + rdd.getID()
+							+ " " + rdd.getName());
 					application.addRdd(rdd);
 				}
-				
 
 			}
 		}
@@ -329,10 +330,8 @@ public class LoggerParser {
 		}
 
 		double dataSize = getApplicationDataSize(rdds);
-		logger.info("Application data size: "+dataSize);
-		application.setDataSize(dataSize/1024);
-
-
+		logger.info("Application data size: " + dataSize);
+		application.setDataSize(dataSize / 1024);
 
 		if (config.toDB && application != null && dbHandler != null) {
 			logger.info("Adding application to the database");
@@ -366,12 +365,12 @@ public class LoggerParser {
 		if (rdds.size() == 0)
 			return -1;
 		RDD firstRDD = rdds.get(0);
-		for(RDD rdd: rdds){
+		for (RDD rdd : rdds) {
 			double totalSize = rdd.getDiskSize() + rdd.getMemorySize();
 			if (totalSize > 0 && rdd.getID() < firstRDD.getID())
 				firstRDD = rdd;
 		}
-		
+
 		return firstRDD.getDiskSize() + firstRDD.getMemorySize();
 
 	}
@@ -450,7 +449,7 @@ public class LoggerParser {
 	private static List<RDD> extractRDDs(List<Row> rddDetails,
 			List<String> rddDetailsColumns, String clusterName, String appID) {
 		List<RDD> rdds = new ArrayList<RDD>();
-		Set<Integer> rddIds = new HashSet<Integer>(); 
+		Set<Integer> rddIds = new HashSet<Integer>();
 		for (Row row : rddDetails) {
 			int rddID = (int) row.getLong(rddDetailsColumns.indexOf("RDD ID"));
 			RDD rdd = new RDD(appID, clusterName, rddID);
@@ -483,17 +482,18 @@ public class LoggerParser {
 			if (!row.isNullAt(rddDetailsColumns.indexOf("Disk Size")))
 				rdd.setDiskSize((double) row.getLong(rddDetailsColumns
 						.indexOf("Disk Size")) / byteToMByteFactor);
-			
-			//if we are filtering rdds and this one does not use memory or disk then skip it
-			if(config.filterComputedRDDs && rdd.getMemorySize() + rdd.getDiskSize() == 0)
+
+			// if we are filtering rdds and this one does not use memory or disk
+			// then skip it
+			if (config.filterComputedRDDs
+					&& rdd.getMemorySize() + rdd.getDiskSize() == 0)
 				continue;
-			
-			if(!rddIds.contains(rdd.getID())){
+
+			if (!rddIds.contains(rdd.getID())) {
 				rddIds.add(rdd.getID());
 				rdds.add(rdd);
 			}
-			
-			
+
 		}
 		return rdds;
 	}
@@ -742,37 +742,35 @@ public class LoggerParser {
 	private static DataFrame retrieveRDDInformation() {
 
 		sqlContext
-		.sql("SELECT regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1) as RddID, "				
-				+ " sum(`blocks.Status.Memory Size`) as `Memory Size`, "
-				+ " count(`blocks.Status.Storage Level.Use Memory`=true) as `Number of Cached Partitions`,"
-				+ " max(`blocks.Status.Storage Level.Use Memory`) as `Use Memory`,"
-				+ " max(`blocks.Status.Storage Level.Use Disk`) as `Use Disk`,"
-				+ " sum(`blocks.Status.Disk Size`) as `Disk Size` "
-				+ " FROM events LATERAL VIEW explode(`Task Metrics.Updated Blocks`) blocksTable AS blocks"
-				+ " WHERE Event LIKE '%TaskEnd' AND `Task Metrics.Updated Blocks` IS NOT NULL"
-				+ "	GROUP BY regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1)").registerTempTable("RDDSizes");
-		
-		
-			
+				.sql("SELECT regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1) as RddID, "
+						+ " sum(`blocks.Status.Memory Size`) as `Memory Size`, "
+						+ " count(`blocks.Status.Storage Level.Use Memory`=true) as `Number of Cached Partitions`,"
+						+ " max(`blocks.Status.Storage Level.Use Memory`) as `Use Memory`,"
+						+ " max(`blocks.Status.Storage Level.Use Disk`) as `Use Disk`,"
+						+ " sum(`blocks.Status.Disk Size`) as `Disk Size` "
+						+ " FROM events LATERAL VIEW explode(`Task Metrics.Updated Blocks`) blocksTable AS blocks"
+						+ " WHERE Event LIKE '%TaskEnd' AND `Task Metrics.Updated Blocks` IS NOT NULL"
+						+ "	GROUP BY regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1)")
+				.registerTempTable("RDDSizes");
+
 		sqlContext
 				.sql("SELECT `Stage Info.Stage ID`, "
 						+ "`RDDInfo.RDD ID`,"
 						+ "RDDInfo.Name,"
 						+ "RDDInfo.Scope,"
-						+ "`RDDInfo.Parent IDs`,"						
+						+ "`RDDInfo.Parent IDs`,"
 						+ "`RDDInfo.Storage Level.Use ExternalBlockStore`,"
 						+ "`RDDInfo.Storage Level.Deserialized`,"
 						+ "`RDDInfo.Storage Level.Replication`,"
 						+ "`RDDInfo.Number of Partitions`,"
 						+ "`RDDInfo.ExternalBlockStore Size`"
 						+ " FROM events LATERAL VIEW explode(`Stage Info.RDD Info`) rddInfoTable AS RDDInfo"
-						+ " WHERE Event LIKE '%StageCompleted'").registerTempTable("RDDInfo");;
+						+ " WHERE Event LIKE '%StageCompleted'")
+				.registerTempTable("RDDInfo");
 
-		 return sqlContext.sql("SELECT * "
-			 		+ "FROM RDDInfo JOIN RDDSizes ON RddID=`RDD ID`");
+		return sqlContext.sql("SELECT * "
+				+ "FROM RDDInfo LEFT JOIN RDDSizes ON RddID=`RDD ID`");
 	}
-	
-
 
 	/**
 	 * gets a list of stages from the dataframe
@@ -872,9 +870,17 @@ public class LoggerParser {
 				scopeName = scopeObject.get("name").getAsString();
 			}
 
+			boolean useDisk = false;
+			if (!row.isNullAt(6))
+				useDisk = row.getBoolean(6);
+
+			boolean useMemory = false;
+			if (!row.isNullAt(7))
+				useMemory = row.getBoolean(7);
+
 			rdds.add(new RDDnode((int) row.getLong(0), row.getString(2),
 					parentList, scopeID, (int) row.getLong(4), scopeName,
-					(int) row.getLong(5), row.getBoolean(6), row.getBoolean(7),
+					(int) row.getLong(5), useDisk, useMemory,
 					row.getBoolean(8), row.getBoolean(9), (int) row.getLong(10)));
 
 		}

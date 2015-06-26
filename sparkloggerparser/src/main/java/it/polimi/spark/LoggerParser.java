@@ -745,19 +745,21 @@ public class LoggerParser {
 		.sql("SELECT regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1) as RddID, "				
 				+ " sum(`blocks.Status.Memory Size`) as `Memory Size`, "
 				+ " count(`blocks.Status.Storage Level.Use Memory`=true) as `Number of Cached Partitions`,"
+				+ " max(`blocks.Status.Storage Level.Use Memory`) as `Use Memory`,"
+				+ " max(`blocks.Status.Storage Level.Use Disk`) as `Use Disk`,"
 				+ " sum(`blocks.Status.Disk Size`) as `Disk Size` "
 				+ " FROM events LATERAL VIEW explode(`Task Metrics.Updated Blocks`) blocksTable AS blocks"
 				+ " WHERE Event LIKE '%TaskEnd' AND `Task Metrics.Updated Blocks` IS NOT NULL"
 				+ "	GROUP BY regexp_extract(`blocks.Block ID`, 'rdd_(.[0-9]*)_*', 1)").registerTempTable("RDDSizes");
+		
+		
 			
 		sqlContext
 				.sql("SELECT `Stage Info.Stage ID`, "
 						+ "`RDDInfo.RDD ID`,"
 						+ "RDDInfo.Name,"
 						+ "RDDInfo.Scope,"
-						+ "`RDDInfo.Parent IDs`,"
-						+ "`RDDInfo.Storage Level.Use Disk`,"
-						+ "`RDDInfo.Storage Level.Use Memory`,"
+						+ "`RDDInfo.Parent IDs`,"						
 						+ "`RDDInfo.Storage Level.Use ExternalBlockStore`,"
 						+ "`RDDInfo.Storage Level.Deserialized`,"
 						+ "`RDDInfo.Storage Level.Replication`,"

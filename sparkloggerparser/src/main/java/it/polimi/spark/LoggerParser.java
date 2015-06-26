@@ -459,12 +459,12 @@ public class LoggerParser {
 				rdd.setScope(row.getString(rddDetailsColumns.indexOf("Scope")));
 			if (!row.isNullAt(rddDetailsColumns.indexOf("Name")))
 				rdd.setName(row.getString(rddDetailsColumns.indexOf("Name")));
-			if (!row.isNullAt(rddDetailsColumns.indexOf("Use Disk")))
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Disk")))
 				rdd.setUseDisk(row.getBoolean(rddDetailsColumns
-						.indexOf("Use Disk")));
-			if (!row.isNullAt(rddDetailsColumns.indexOf("Use Memory")))
+						.indexOf("Disk")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Memory")))
 				rdd.setUseMemory(row.getBoolean(rddDetailsColumns
-						.indexOf("Use Memory")));
+						.indexOf("Memory")));
 			if (!row.isNullAt(rddDetailsColumns.indexOf("Deserialized")))
 				rdd.setDeserialized(row.getBoolean(rddDetailsColumns
 						.indexOf("Deserialized")));
@@ -761,6 +761,8 @@ public class LoggerParser {
 						+ "`RDDInfo.Parent IDs`,"
 						+ "`RDDInfo.Storage Level.Use ExternalBlockStore`,"
 						+ "`RDDInfo.Storage Level.Deserialized`,"
+						+ "`RDDInfo.Storage Level.Use Memory`,"
+						+ "`RDDInfo.Storage Level.Use Disk`,"
 						+ "`RDDInfo.Storage Level.Replication`,"
 						+ "`RDDInfo.Number of Partitions`,"
 						+ "`RDDInfo.ExternalBlockStore Size`"
@@ -768,8 +770,12 @@ public class LoggerParser {
 						+ " WHERE Event LIKE '%StageCompleted'")
 				.registerTempTable("RDDInfo");
 
-		return sqlContext.sql("SELECT * "
+
+		return sqlContext.sql("SELECT * , "
+				+ "if( isnull(`RDDSizes.Use Memory`),`RDDInfo.Use Memory` , `RDDSizes.Use Memory`) as Memory, "
+				+ "if( isnull(`RDDSizes.Use Disk`),`RDDInfo.Use Disk` , `RDDSizes.Use Disk`) as Disk "
 				+ "FROM RDDInfo LEFT JOIN RDDSizes ON RddID=`RDD ID`");
+		
 	}
 
 	/**
@@ -840,8 +846,8 @@ public class LoggerParser {
 		List<RDDnode> rdds = new ArrayList<RDDnode>();
 
 		DataFrame table = rddDetails.select("RDD ID", "Parent IDs", "Name",
-				"Scope", "Number of Partitions", "Stage ID", "Use Disk",
-				"Use Memory", "Use ExternalBlockStore", "Deserialized",
+				"Scope", "Number of Partitions", "Stage ID", "Disk",
+				"Memory", "Use ExternalBlockStore", "Deserialized",
 				"Replication").distinct();
 		for (Row row : table.collectAsList()) {
 			List<Long> tmpParentList = null;

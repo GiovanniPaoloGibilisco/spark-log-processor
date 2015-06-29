@@ -14,6 +14,15 @@ public class Stage {
 	private double outputSize;
 	private double shuffleReadSize;
 	private double shuffleWriteSize;
+	private int numberOfTaks;
+	public int getNumberOfTaks() {
+		return numberOfTaks;
+	}
+
+	public void setNumberOfTaks(int numberOfTaks) {
+		this.numberOfTaks = numberOfTaks;
+	}
+
 	private int id;
 	static final Logger logger = LoggerFactory.getLogger(Stage.class);
 

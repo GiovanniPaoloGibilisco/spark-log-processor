@@ -13,6 +13,8 @@ import java.net.URISyntaxException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -246,16 +248,6 @@ public class LoggerParser {
 							job.addStage(stageById.get(stageId));
 
 				}
-
-				/*
-				 * Old code to get the input size looking at the input size of
-				 * the first stage int firstStageID = Integer.MAX_VALUE; for
-				 * (int id : stageById.keySet()) if (id < firstStageID)
-				 * firstStageID = id; Stage firstStage =
-				 * stageById.get(firstStageID); // convert MB to GB in the
-				 * application application.setDataSize(firstStage.getInputSize()
-				 * / 1024);
-				 */
 			}
 
 			numberOfJobs = jobDetails.size() - 1;
@@ -329,7 +321,10 @@ public class LoggerParser {
 
 		}
 
-		double dataSize = getApplicationDataSize(rdds);
+		// double dataSize = getApplicationDataSize(rddDetails,
+		// rddDetailsColumns, stages);
+		double dataSize = getApplicationDataSize(stages,
+				application.getParallelism());
 		logger.info("Application data size: " + dataSize);
 		application.setDataSize(dataSize / 1024);
 
@@ -354,32 +349,79 @@ public class LoggerParser {
 			dbHandler.close();
 	}
 
-	private static double getApplicationDataSize(List<RDD> rdds) {
-		double size = getInputSizeByRDDName(rdds);
-		if (size < 0)
-			size = getFirstRDDSize(rdds);
-		return size;
-	}
+	/**
+	 * Retrieves the input data size looking at the input size of the first
+	 * stage with at least the default number of partitions
+	 * 
+	 * @param rdds
+	 * @param stages
+	 * @return
+	 */
+	private static double getApplicationDataSize(List<Stage> stages,
+			int defaultParallelism) {
+		//if no default parallelism has been specified then try to avoid stages with a single executor at first
+		if (defaultParallelism == 0)
+			defaultParallelism = 2;
+		// sort the stages per id
+		Collections.sort(stages, new Comparator<Stage>() {
+			@Override
+			public int compare(Stage o1, Stage o2) {
+				return o1.getID() - o2.getID();
+			}
+		});
 
-	private static double getFirstRDDSize(List<RDD> rdds) {
-		if (rdds.size() == 0)
-			return -1;
-		RDD firstRDD = rdds.get(0);
-		for (RDD rdd : rdds) {
-			double totalSize = rdd.getDiskSize() + rdd.getMemorySize();
-			if (totalSize > 0 && rdd.getID() < firstRDD.getID())
-				firstRDD = rdd;
+		// return the first stage with at least the minimum parallelism
+		for (Stage stage : stages) {
+			if (stage.getNumberOfTaks() >= defaultParallelism)
+				return stage.getInputSize();
 		}
 
-		return firstRDD.getDiskSize() + firstRDD.getMemorySize();
+		// if no such stage exist return the first stage 
+		return stages.get(0).getInputSize();
 
 	}
 
-	private static double getInputSizeByRDDName(List<RDD> rdds) {
-		for (RDD rdd : rdds) {
-			double totalSize = rdd.getDiskSize() + rdd.getMemorySize();
-			if (totalSize > 0 && rdd.getName().contains("Input"))
-				return totalSize;
+	/**
+	 * Retrieves the input data size looking at the input size of the stage in
+	 * which the rdd with "Input" in its name was loaded. If no such event
+	 * occurred then it returns then it gives the input size of the first stage
+	 * 
+	 * @param rdds
+	 * @param stages
+	 * @return
+	 */
+	private static double getApplicationDataSize(List<Row> rddDetails,
+			List<String> rddDetailsColumns, List<Stage> stages) {
+		int stageId = getStageIdOfInputRdd(rddDetails, rddDetailsColumns);
+
+		// If there is no RDD with Input in its name then use the first stage,
+		// hopefully the application will load the data in the first stage
+		if (stageId < 0)
+			stageId = 0;
+
+		for (Stage stage : stages)
+			if (stage.getID() == stageId)
+				return stage.getInputSize();
+
+		// if everything else failes return error code
+		return -1;
+	}
+
+	/**
+	 * Retrieves the id of the stage in which the rdd with "Input" in its name
+	 * was loaded.
+	 * 
+	 * @param rdds
+	 * @return
+	 */
+	private static int getStageIdOfInputRdd(List<Row> rddDetails,
+			List<String> rddDetailsColumns) {
+
+		int scopeColumnId = rddDetailsColumns.indexOf("Scope");
+		for (Row row : rddDetails) {
+			String scope = row.getString(scopeColumnId);
+			if (scope.contains("Input") || scope.contains("textFile"))
+				return (int) row.getLong(rddDetailsColumns.indexOf("Stage ID"));
 		}
 		return -1;
 	}
@@ -457,11 +499,13 @@ public class LoggerParser {
 				rdd.setName(row.getString(rddDetailsColumns.indexOf("Name")));
 			if (!row.isNullAt(rddDetailsColumns.indexOf("Scope")))
 				rdd.setScope(row.getString(rddDetailsColumns.indexOf("Scope")));
+			if (!row.isNullAt(rddDetailsColumns.indexOf("Stage ID")))
+				rdd.setStageIDl((int) row.getLong(rddDetailsColumns
+						.indexOf("Stage ID")));
 			if (!row.isNullAt(rddDetailsColumns.indexOf("Name")))
 				rdd.setName(row.getString(rddDetailsColumns.indexOf("Name")));
 			if (!row.isNullAt(rddDetailsColumns.indexOf("Disk")))
-				rdd.setUseDisk(row.getBoolean(rddDetailsColumns
-						.indexOf("Disk")));
+				rdd.setUseDisk(row.getBoolean(rddDetailsColumns.indexOf("Disk")));
 			if (!row.isNullAt(rddDetailsColumns.indexOf("Memory")))
 				rdd.setUseMemory(row.getBoolean(rddDetailsColumns
 						.indexOf("Memory")));
@@ -569,6 +613,8 @@ public class LoggerParser {
 						stage2jobMap.get(stageId), stageId);
 				stage.setDuration(Integer.parseInt(row.getString(stageColumns
 						.indexOf("Duration"))));
+				stage.setNumberOfTaks((int) row.getLong(stageColumns
+						.indexOf("Number of Tasks")));
 				stages.add(stage);
 			}
 		}
@@ -770,12 +816,12 @@ public class LoggerParser {
 						+ " WHERE Event LIKE '%StageCompleted'")
 				.registerTempTable("RDDInfo");
 
+		return sqlContext
+				.sql("SELECT * , "
+						+ "if( isnull(`RDDSizes.Use Memory`),`RDDInfo.Use Memory` , `RDDSizes.Use Memory`) as Memory, "
+						+ "if( isnull(`RDDSizes.Use Disk`),`RDDInfo.Use Disk` , `RDDSizes.Use Disk`) as Disk "
+						+ "FROM RDDInfo LEFT JOIN RDDSizes ON RddID=`RDD ID`");
 
-		return sqlContext.sql("SELECT * , "
-				+ "if( isnull(`RDDSizes.Use Memory`),`RDDInfo.Use Memory` , `RDDSizes.Use Memory`) as Memory, "
-				+ "if( isnull(`RDDSizes.Use Disk`),`RDDInfo.Use Disk` , `RDDSizes.Use Disk`) as Disk "
-				+ "FROM RDDInfo LEFT JOIN RDDSizes ON RddID=`RDD ID`");
-		
 	}
 
 	/**
@@ -846,9 +892,9 @@ public class LoggerParser {
 		List<RDDnode> rdds = new ArrayList<RDDnode>();
 
 		DataFrame table = rddDetails.select("RDD ID", "Parent IDs", "Name",
-				"Scope", "Number of Partitions", "Stage ID", "Disk",
-				"Memory", "Use ExternalBlockStore", "Deserialized",
-				"Replication").distinct();
+				"Scope", "Number of Partitions", "Stage ID", "Disk", "Memory",
+				"Use ExternalBlockStore", "Deserialized", "Replication")
+				.distinct();
 		for (Row row : table.collectAsList()) {
 			List<Long> tmpParentList = null;
 			List<Integer> parentList = null;

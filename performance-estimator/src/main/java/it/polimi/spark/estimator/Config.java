@@ -34,24 +34,27 @@ public class Config implements Serializable {
 		_instance = new Config();
 		commander = new JCommander(_instance, args);
 		logger.info(
-				"Configuration: --dagInputFolder {} --outputFolder {} --usage {} --stagePerformance {} --jobPerformance {} --exportToDatabase {} --dbUser {} --dbPassword {} --dbUrl {} --clusterName {} -- appId {}",
-				new Object[] { _instance.dagInputFolder, _instance.outputFile,
+				"Configuration: --batchFolder {} --dagInputFolder {} --outputFolder {} --usage {} --stagePerformance {} --jobPerformance {} --exportToDatabase {} --dbUser {} --dbPassword {} --dbUrl {} --clusterName {} -- appId {}",
+				new Object[] { _instance.benchmarkFolder, _instance.dagInputFolder, _instance.outputFile,
 						_instance.usage, _instance.stagePerformanceFile,
 						_instance.jobPerformanceFile, _instance.toDB,
 						_instance.dbUser, _instance.dbPassword,
 						_instance.dbUrl, _instance.clusterName, _instance.appId });
 	}
 
-	@Parameter(names = { "-i", "--dagInputFolder" }, required = true, description = "Path to the input folder containing the serialized DAGs")
+	@Parameter(names = { "-b", "--batchFolder" }, description = "Path to the input folder containing the benchmarks")
+	public String benchmarkFolder;	
+	
+	@Parameter(names = { "-i", "--dagInputFolder" }, description = "Path to the input folder containing the serialized DAGs")
 	public String dagInputFolder;
 
-	@Parameter(names = { "-o", "--outputFolder" }, required = false, description = "output folder to store something")
+	@Parameter(names = { "-o", "--outputFolder" },  description = "output folder to store something")
 	public String outputFile;
 
-	@Parameter(names = { "-s", "--stagePerformance" }, required = true, description = "Path to the stage performance CSV input file")
+	@Parameter(names = { "-s", "--stagePerformance" }, description = "Path to the stage performance CSV input file")
 	public String stagePerformanceFile;
 
-	@Parameter(names = { "-j", "--jobPerformance" }, required = true, description = "Path to the job performance CSV input file")
+	@Parameter(names = { "-j", "--jobPerformance" }, description = "Path to the job performance CSV input file")
 	public String jobPerformanceFile;
 
 	@Parameter(names = { "-u", "--usage" }, description = "print this information screen")
@@ -74,6 +77,12 @@ public class Config implements Serializable {
 
 	@Parameter(names = { "--appId" }, description = "the Id of the application (to be used as key in the database)")
 	public String appId = null;
+	
+	public boolean batch=false;
+	
+	public boolean isBatch() {
+		return batch;
+	}
 
 	public void usage() {
 		StringBuilder builder = new StringBuilder();

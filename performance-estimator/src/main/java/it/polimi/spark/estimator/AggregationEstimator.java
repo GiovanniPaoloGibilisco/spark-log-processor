@@ -24,12 +24,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Estimate the duration of an application starting from the real stage durations and aggregating using the estimateJobduration utility function (in Utils.java)
+ * Estimate the duration of an application starting from the real stage
+ * durations and aggregating using the estimateJobduration utility function (in
+ * Utils.java)
+ * 
  * @author giovanni
  *
  */
 public class AggregationEstimator {
-	
+
 	long applicationDurationEstimation = 0;
 	Map<Integer, Long> jobDurationEstimation = new HashMap<Integer, Long>();
 	Map<Integer, Long> jobdurationEstimationError = new HashMap<Integer, Long>();
@@ -37,24 +40,26 @@ public class AggregationEstimator {
 	Config config = Config.getInstance();
 	Path inputFolder;
 	Map<String, DirectedAcyclicGraph<Stagenode, DefaultEdge>> stageDags = new LinkedHashMap<String, DirectedAcyclicGraph<Stagenode, DefaultEdge>>();
-	static final Logger logger = LoggerFactory.getLogger(AggregationEstimator.class);
-	
-	public AggregationEstimator() { 
-		
+	static final Logger logger = LoggerFactory
+			.getLogger(AggregationEstimator.class);
+
+	public AggregationEstimator() {
+
 		inputFolder = Paths.get(config.dagInputFolder);
 		if (!inputFolder.toFile().exists()) {
 			logger.info("Input folder " + inputFolder + " does not exist");
 			return;
 		}
 	}
-	
-	
-	public void estimateDuration() throws ClassNotFoundException, IOException, SQLException{
+
+	public void estimateDuration() throws ClassNotFoundException, IOException,
+			SQLException {
 		// load the dags
-		
+
 		if (inputFolder.toFile().isFile()) {
 			logger.info("Input folder is actually a file, processing only that file");
-			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = Utils.deserializeFile(inputFolder);
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = Utils
+					.deserializeFile(inputFolder);
 			if (dag != null)
 				stageDags.put(inputFolder.getFileName().toString(), dag);
 		} else {
@@ -66,7 +71,8 @@ public class AggregationEstimator {
 					// or
 					// delegate it to the deserialization function
 					logger.debug("loading " + file.getFileName() + " dag");
-					DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = Utils.deserializeFile(file);
+					DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = Utils
+							.deserializeFile(file);
 					if (dag != null)
 						stageDags.put(file.getFileName().toString(), dag);
 				}
@@ -128,16 +134,9 @@ public class AggregationEstimator {
 			int jobId = Integer.decode(dagName.split("Job_")[1]);
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = stageDags
 					.get(dagName);
-			Stagenode finalStage = null;
-			for (Stagenode stage : dag.vertexSet()) {
-				if (dag.outDegreeOf(stage) == 0) {
-					finalStage = stage;
-					break;
-				}
-			}
 
 			long estimatedDuration = Utils.estimateJobDuration(dag,
-					stageDurationInfo, finalStage);
+					stageDurationInfo);
 			long actualDuration = jobDuration.get(jobId);
 			long error = Math.abs(estimatedDuration - actualDuration);
 

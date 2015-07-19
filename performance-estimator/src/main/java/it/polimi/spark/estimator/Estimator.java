@@ -51,11 +51,12 @@ public class Estimator {
 		}
 		
 	
-		if(config.isBatch()){
+		if(!config.isBatch()){
 			AggregationEstimator estimator = new AggregationEstimator();
 			estimator.estimateDuration();
 		}else{
-			//TODO: create a new Batch Estimation
+			ApplicationEstimator estimator = new ApplicationEstimator();
+			estimator.estimateDuration();
 		}
 		
 

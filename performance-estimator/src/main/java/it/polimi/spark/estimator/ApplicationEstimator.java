@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,6 +28,7 @@ import java.util.TreeMap;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.math3.analysis.polynomials.PolynomialFunction;
 import org.apache.commons.math3.fitting.PolynomialCurveFitter;
 import org.apache.commons.math3.fitting.WeightedObservedPoint;
@@ -50,14 +52,15 @@ public class ApplicationEstimator {
 	Path inputFolder;
 
 	private static final int maxDegree = 3;
+	private static final int k = 5;
 
 	Map<String, Long> durations = new HashMap<String, Long>();
 	Map<String, Double> sizes = new HashMap<String, Double>();
 	Map<Integer, Map<String, Long>> stageDurations = new HashMap<>();
 	Map<Integer, DirectedAcyclicGraph<Stagenode, DefaultEdge>> jobDags = new HashMap<Integer, DirectedAcyclicGraph<Stagenode, DefaultEdge>>();
 	Set<String> trainSet = new HashSet<>();
-	Set<String> crossValidationSet = new HashSet<>();
 	Set<String> testSet = new HashSet<>();
+	Set<Integer> executedStages;
 
 	static final Logger logger = LoggerFactory
 			.getLogger(ApplicationEstimator.class);
@@ -103,18 +106,15 @@ public class ApplicationEstimator {
 		directoryStream.close();
 		// showData();
 
-		// extract testing, training and cross validation sets (testing sets is
+		// extract testing and training (testing sets is
 		// biased toward biggest applications)
 		testSet = extractTestSet();
 		trainSet = extractTrainSet();
-		crossValidationSet = extractCVSet();
 
 		logger.info("Training Set");
 		showSet(trainSet);
 		logger.info("Testing Set");
 		showSet(testSet);
-		logger.info("Cross Validation Set");
-		showSet(crossValidationSet);
 
 		// estimate the durations and output the results to a csv file
 		OutputStream stageOs = new FileOutputStream(Paths.get(
@@ -134,19 +134,27 @@ public class ApplicationEstimator {
 		appsBr.write("App ID,Real Duration,Estimated Duration,Error,Error Percentage,Size");
 		appsBr.write("\n");
 
+		// build stage models
+		Map<Integer, PolynomialFunction> stageModels = new HashMap<>();
+
+		// filter non executed stages
+		executedStages = filterExecutedStages();
+
+		for (int stageID : executedStages) {
+			stageModels.put(stageID, buildStageModel(stageID));
+		}
+
 		// for each application, estimate its duration
 		for (String appId : testSet) {
 			double appSize = sizes.get(appId);
 			logger.debug("Estimating stage durations for app " + appId
 					+ " size: " + appSize);
-			Map<Integer, Long> estimatedStageDurations = estimateStageDurations(appSize);
-
-			// Map<Integer, Long> estimatedStageDurations =
-			// estimateStageDurations(appSize,2);
-
-			for (int stageId : estimatedStageDurations.keySet()) {
+			Map<Integer, Long> estimatedStageDurations = new HashMap<Integer, Long>();
+			for (int stageId : executedStages) {
+				long estimatedDuration = new Double(stageModels.get(stageId)
+						.value(appSize)).longValue();
 				long realDuration = stageDurations.get(stageId).get(appId);
-				long estimatedDuration = estimatedStageDurations.get(stageId);
+				estimatedStageDurations.put(stageId, estimatedDuration);
 
 				logger.trace("Stage: " + stageId + " Estimated Duration: "
 						+ estimatedDuration + " Real Duration: " + realDuration
@@ -171,22 +179,26 @@ public class ApplicationEstimator {
 						+ (double) Math.abs(estimatedDuration - realDuration)
 						/ durations.get(appId));
 				stageBr.write("\n");
+
 			}
 
-			long duration = 0;
+			long estimatedAppDuration = 0;
 			for (int jobId : jobDags.keySet())
-				duration += Utils.estimateJobDuration(jobDags.get(jobId),
-						estimatedStageDurations);
+				estimatedAppDuration += Utils.estimateJobDuration(
+						jobDags.get(jobId), estimatedStageDurations);
 
-			logger.info("App: " + appId + " Estimated Duration: " + duration
-					+ " Real Duration: " + durations.get(appId) + "Error: "
-					+ Math.abs(duration - durations.get(appId))
+			logger.info("App: " + appId + " Estimated Duration: "
+					+ estimatedAppDuration + " Real Duration: "
+					+ durations.get(appId) + "Error: "
+					+ Math.abs(estimatedAppDuration - durations.get(appId))
 					+ " Error Percantage "
-					+ (Math.abs(duration - durations.get(appId)))
+					+ (Math.abs(estimatedAppDuration - durations.get(appId)))
 					/ (double) durations.get(appId));
-			appsBr.write(appId + "," + durations.get(appId) + "," + duration
-					+ "," + Math.abs(duration - durations.get(appId)) + ","
-					+ (Math.abs(duration - durations.get(appId)))
+			appsBr.write(appId + "," + durations.get(appId) + ","
+					+ estimatedAppDuration + ","
+					+ Math.abs(estimatedAppDuration - durations.get(appId))
+					+ ","
+					+ (Math.abs(estimatedAppDuration - durations.get(appId)))
 					/ (double) durations.get(appId) + "," + sizes.get(appId));
 			appsBr.write("\n");
 		}
@@ -195,6 +207,121 @@ public class ApplicationEstimator {
 		appsBr.close();
 		stageBr.flush();
 		stageBr.close();
+	}
+
+	/**
+	 * perform k-fold cross validation to build the model for the stage
+	 * 
+	 * @param stageID
+	 * @return
+	 */
+	private PolynomialFunction buildStageModel(int stageID) {
+
+		List<String> appList = new ArrayList<String>(trainSet);
+
+		int testBucketSize = Math.floorDiv(appList.size(), k);
+
+		// Shuffle the train data
+		Collections.shuffle(appList);
+
+		List<PolynomialFunction> functions = new ArrayList<PolynomialFunction>(
+				maxDegree);
+
+		double[] testErrors = new double[maxDegree];
+		Arrays.fill(testErrors, 0.0);
+
+		for (int i = 0; i < k; i++) {
+			int endIndex = (i + 1) * testBucketSize;
+			// if the number of points is not a multiple of k then the last
+			// testing bucket should be a little bigger
+			if (i == k - 1)
+				endIndex = appList.size();
+
+			// generate the test bucket for fold i
+			List<String> foldTestList = appList.subList(i * testBucketSize,
+					endIndex);
+
+			// generate the train bucket for fold i
+			List<String> foldTrainList = new ArrayList<String>(appList);
+			foldTrainList.removeAll(foldTestList);
+
+			List<Double> trainSizes = new ArrayList<Double>();
+			List<Long> trainDurations = new ArrayList<Long>();
+			List<Double> testSizes = new ArrayList<Double>();
+			List<Long> testDurations = new ArrayList<Long>();
+
+			for (String appId : foldTrainList) {
+				trainSizes.add(sizes.get(appId));
+				trainDurations.add(stageDurations.get(stageID).get(appId));
+			}
+			for (String appId : foldTestList) {
+				testSizes.add(sizes.get(appId));
+				testDurations.add(stageDurations.get(stageID).get(appId));
+			}
+
+			// train polynomial functions of orders up to maxDegree using the
+			// trainSet
+			for (int d = 1; d <= maxDegree; d++) {
+				functions.add(getStageEstimationFunction(trainSizes,
+						trainDurations, d));
+			}
+
+			// test how well each function generalizes using the cross
+			// validation set
+			// the cross validation error is defined as: (1/2m) *
+			// sum{1..m}(h(x_i)-y_i)^2
+			// m = size of the cross validation set
+			// h = the polynomial function we are evaluating (hypothesis)
+			// x_i = the size of the data for the i-th stage in the cv set
+			// y_i = the duration of the i-th stage in the cv set
+			int m = testSizes.size();
+			for (int d = 0; d < functions.size(); d++) {
+				double testError = 0;
+				for (int j = 0; j < m; j++) {
+					testError = Math
+							.pow((functions.get(j).value(testSizes.get(i)) - testDurations
+									.get(j).doubleValue()), 2);
+				}
+				testError *= 1.0 / (2.0 * m);
+				testErrors[d] += testError / k;
+			}
+
+		}
+
+		// Select the model with the lowest k-fold cross validation error
+		// (better
+		// generalizes)
+		List<Double> testErrorList = Arrays.asList(ArrayUtils
+				.toObject(testErrors));
+		double minError = Collections.min(testErrorList);
+		int bestDegree = testErrorList.indexOf(minError);
+
+		logger.debug("Best degree for stage " + stageID + " is "
+				+ (bestDegree + 1));
+
+		// Now that the degree for sta stage is fixed we can re-train that
+		// model using also the cv set
+		// TODO: check this otherwise just return functions.get(bestDegree)
+		List<Double> trainSizes = new ArrayList<Double>();
+		List<Long> trainDurations = new ArrayList<Long>();
+		for (String appId : trainSet) {
+			trainSizes.add(sizes.get(appId));
+			trainDurations.add(stageDurations.get(stageID).get(appId));
+		}
+		PolynomialFunction bestModel = getStageEstimationFunction(trainSizes,
+				trainDurations, (bestDegree + 1));
+
+		return bestModel;
+	}
+
+	private Set<Integer> filterExecutedStages() {
+		Set<Integer> stages = new HashSet<>();
+		// any app is fine for this
+		String appId = sizes.keySet().iterator().next();
+		for (int stageID : stageDurations.keySet())
+			if (stageDurations.get(stageID).get(appId) > 0)
+				stages.add(stageID);
+		return stages;
 	}
 
 	/**
@@ -224,101 +351,16 @@ public class ApplicationEstimator {
 		return estimates;
 	}
 
-	/**
-	 * Estimated the stage duration of an application according to its data
-	 * size. This function uses the training and cross validation sets to select
-	 * the best polynomial model and train it.
-	 * 
-	 * @param newSize
-	 * @return
-	 */
-	private Map<Integer, Long> estimateStageDurations(double newSize) {
-		Map<Integer, Long> estimates = new HashMap<Integer, Long>();
-
-		// Select and train a model for each stage
-		for (int stageId : stageDurations.keySet()) {
-			List<Double> trainSizes = new ArrayList<Double>();
-			List<Long> trainDurations = new ArrayList<Long>();
-			List<Double> cvSizes = new ArrayList<Double>();
-			List<Long> cvDurations = new ArrayList<Long>();
-			for (String appId : trainSet) {
-				trainSizes.add(sizes.get(appId));
-				trainDurations.add(stageDurations.get(stageId).get(appId));
-			}
-			for (String appId : crossValidationSet) {
-				cvSizes.add(sizes.get(appId));
-				cvDurations.add(stageDurations.get(stageId).get(appId));
-			}
-
-			// train polynomial functions of orders up to maxDegree using the
-			// trainSet
-			List<PolynomialFunction> functions = new ArrayList<PolynomialFunction>(
-					maxDegree);
-			for (int i = 1; i <= maxDegree; i++) {
-				functions.add(getStageEstimationFunction(trainSizes,
-						trainDurations, i));
-			}
-
-			// test how well each function generalizes using the cross
-			// validation set
-			// the cross validation error is defined as: (1/2m) *
-			// sum{1..m}(h(x_i)-y_i)^2
-			// m = size of the cross validation set
-			// h = the polynomial function we are evaluating (hypothesis)
-			// x_i = the size of the data for the i-th stage in the cv set
-			// y_i = the duration of the i-th stage in the cv set
-			List<Double> cvErrors = new ArrayList<>(maxDegree);
-			int m = cvSizes.size();
-			for (int j = 0; j < functions.size(); j++) {
-				double cvError = 0;
-				for (int i = 0; i < m; i++) {
-					cvError = Math
-							.pow((functions.get(j).value(cvSizes.get(i)) - cvDurations
-									.get(i).doubleValue()), 2);
-				}
-				cvError *= 1.0 / (2.0 * m);
-				cvErrors.add(cvError);
-				logger.debug("Polinomial Degree: " + (j + 1)
-						+ " Cross Validation Error: " + cvError);
-			}
-
-			// Select the model with the lowest cross validation error (better
-			// generalizes)
-			int bestDegree = cvErrors.indexOf(Collections.min(cvErrors));
-			logger.debug("Best degree for stage " + stageId + " is "
-					+ (bestDegree + 1));
-
-			// Now that the degree for sta stage is fixed we can re-train that
-			// model using also the cv set
-			trainSizes.addAll(cvSizes);
-			trainDurations.addAll(cvDurations);
-			PolynomialFunction bestModel = getStageEstimationFunction(
-					trainSizes, trainDurations, bestDegree);
-
-			// finally we use it to estimate the new value
-			long estimation = new Double(bestModel.value(newSize)).longValue();
-
-			estimates.put(stageId, estimation);
-		}
-		return estimates;
-	}
-
 	private void showSet(Set<String> set) {
 		for (String id : set)
 			logger.info("App: " + id + " Size: " + sizes.get(id));
 	}
 
 	private Set<String> extractTrainSet() {
-
-		int trainSetSize = new Double(sizes.size() * config.trainFraction)
-				.intValue();
-
 		List<String> availableApps = new ArrayList<>(sizes.keySet());
 		availableApps.removeAll(testSet);
-
-		Collections.shuffle(availableApps);
-
-		return new HashSet<>(availableApps.subList(0, trainSetSize));
+		availableApps.removeAll(trainSet);
+		return new HashSet<>(availableApps);
 	}
 
 	private Set<String> extractTestSet() {
@@ -328,8 +370,7 @@ public class ApplicationEstimator {
 		for (String id : sizes.keySet())
 			size2application.put(sizes.get(id), id);
 
-		int testSetSize = new Double(sizes.size()
-				* (1 - config.trainFraction - config.crossValidationFraction))
+		int testSetSize = new Double(sizes.size() * (1 - config.trainFraction))
 				.intValue();
 
 		testSetSize = testSetSize < 1 ? 1 : testSetSize;
@@ -341,14 +382,6 @@ public class ApplicationEstimator {
 				sizes.size()))
 			testSet.add(size2application.get(size));
 		return testSet;
-	}
-
-	private Set<String> extractCVSet() {
-		List<String> availableApps = new ArrayList<>(sizes.keySet());
-		availableApps.removeAll(testSet);
-		availableApps.removeAll(trainSet);
-		return new HashSet<>(availableApps);
-
 	}
 
 	private void getJobDags(Path benchmarkfolder) throws IOException,
@@ -389,7 +422,7 @@ public class ApplicationEstimator {
 		for (CSVRecord record : eventsRecords) {
 			int stageID = Integer.decode(record.get("Stage ID"));
 			long duration = Long.decode(record.get("Duration"));
-			//skip non executed stages
+			// skip non executed stages
 			if (duration == 0)
 				continue;
 			if (!stageDurations.containsKey(stageID))

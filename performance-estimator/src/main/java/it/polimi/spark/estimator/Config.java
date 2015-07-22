@@ -34,8 +34,8 @@ public class Config implements Serializable {
 		_instance = new Config();
 		commander = new JCommander(_instance, args);
 		logger.info(
-				"Configuration: --batchFolder {} --trainFraction{} --crossValidationFraction{} --dagInputFolder {} --outputFolder {} --usage {} --stagePerformance {} --jobPerformance {} --exportToDatabase {} --dbUser {} --dbPassword {} --dbUrl {} --clusterName {} -- appId {}",
-				new Object[] { _instance.benchmarkFolder, _instance.trainFraction, _instance.crossValidationFraction, _instance.dagInputFolder, _instance.outputFile,
+				"Configuration: --batchFolder {} --trainFraction{} --dagInputFolder {} --outputFolder {} --usage {} --stagePerformance {} --jobPerformance {} --exportToDatabase {} --dbUser {} --dbPassword {} --dbUrl {} --clusterName {} -- appId {}",
+				new Object[] { _instance.benchmarkFolder, _instance.trainFraction, _instance.dagInputFolder, _instance.outputFile,
 						_instance.usage, _instance.stagePerformanceFile,
 						_instance.jobPerformanceFile, _instance.toDB,
 						_instance.dbUser, _instance.dbPassword,
@@ -47,9 +47,6 @@ public class Config implements Serializable {
 	
 	@Parameter(names = { "-t", "--trainFraction" }, description = "fraction of the applications in the input folder to use as training set")
 	public double trainFraction;
-	
-	@Parameter(names = { "-cv", "--crossValidationFraction" }, description = "fraction of the applications in the input folder to use as cross validation set")
-	public double crossValidationFraction;	
 	
 	@Parameter(names = { "-i", "--dagInputFolder" }, description = "Path to the input folder containing the serialized DAGs")
 	public String dagInputFolder;

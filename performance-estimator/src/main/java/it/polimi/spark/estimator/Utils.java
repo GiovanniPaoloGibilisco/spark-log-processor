@@ -67,11 +67,14 @@ public class Utils {
 			// computations, perform branch pruning or some other tricks.
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag,
 			Map<Integer, Long> stageDuration, Stagenode finalStage) {
-		
+
 		// default case, if the stage does not depend on other stages then it is
 		// just its duration
 		if (dag.inDegreeOf(finalStage) == 0)
-			return stageDuration.get(finalStage.getId());
+			if (stageDuration.containsKey(finalStage.getId()))
+				return stageDuration.get(finalStage.getId());
+			else
+				return 0;
 
 		// if the stage has dependencies the duration is is own duration plus
 		// the maximum duration of its parents.
@@ -80,20 +83,26 @@ public class Utils {
 			parentDurations.add(estimateJobDuration(dag, stageDuration,
 					dag.getEdgeSource(edge)));
 
-		return stageDuration.get(finalStage.getId())
-				+ Collections.max(parentDurations);
+		//use zero as default if the final stage has not been executed
+		long currentstageduration = 0;
+		if (stageDuration.containsKey(finalStage.getId()))
+			currentstageduration = stageDuration.get(finalStage.getId());
+		return currentstageduration + Collections.max(parentDurations);
+
 	}
-	
+
 	/**
 	 * Gets the duration of the dag starting from the finalStage and using:
 	 * "duration(finalStage) + max(duration(finalStage.parents))" it operates
 	 * recursively on the entire DAG.
+	 * 
 	 * @param dag
 	 * @param stageDuration
 	 * @return
 	 */
-	static long estimateJobDuration(DirectedAcyclicGraph<Stagenode, DefaultEdge> dag,
-			Map<Integer, Long> stageDuration){
+	static long estimateJobDuration(
+			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag,
+			Map<Integer, Long> stageDuration) {
 		Stagenode finalStage = null;
 		for (Stagenode stage : dag.vertexSet()) {
 			if (dag.outDegreeOf(stage) == 0) {

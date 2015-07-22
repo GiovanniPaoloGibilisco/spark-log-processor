@@ -293,7 +293,7 @@ public class ApplicationEstimator {
 			trainSizes.addAll(cvSizes);
 			trainDurations.addAll(cvDurations);
 			PolynomialFunction bestModel = getStageEstimationFunction(
-					trainSizes, trainDurations, bestDegree);
+					trainSizes, trainDurations, bestDegree+1);
 
 			// finally we use it to estimate the new value
 			long estimation = new Double(bestModel.value(newSize)).longValue();

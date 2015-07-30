@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 public class Estimator {
 
 	private static Config config;	
+	public static List<EstimationResult> results;
 	static final Logger logger = LoggerFactory.getLogger(Estimator.class);
 
 	public static void main(String[] args) throws IOException,
@@ -56,7 +57,7 @@ public class Estimator {
 			estimator.estimateDuration();
 		}else{
 			ApplicationEstimator estimator = new ApplicationEstimator();
-			estimator.estimateDuration();
+			results = estimator.estimateDuration();
 		}
 		
 

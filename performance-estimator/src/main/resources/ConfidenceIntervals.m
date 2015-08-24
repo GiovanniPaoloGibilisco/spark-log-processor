@@ -17,8 +17,8 @@ sigma = std(relative_error);
 
 %remove the average of the error if it is not 0 and multiply by the
 %appropiate sigma
-sup = y_estimate *(1 + mu + sigma_multiplier*sigma);
-inf= y_estimate *(1 + mu - sigma_multiplier*sigma);
+sup = y_estimate - mu + y_estimate*sigma_multiplier*sigma;
+inf = y_estimate - mu - y_estimate*sigma_multiplier*sigma;
 
 end
 

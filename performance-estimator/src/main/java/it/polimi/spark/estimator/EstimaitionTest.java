@@ -19,9 +19,9 @@ import java.util.TreeMap;
 import org.apache.commons.io.FileUtils;
 
 public class EstimaitionTest {
-	static final double min = 0.5;
+	static final double min = 0.4;
 	static final double max = 0.8;
-	static final String inputFolder = "src/main/resources/LogisticRegressionDisk";
+	static final String inputFolder = "src/main/resources/PageRank3";
 	static final String baseOut = "src/main/resources/output";
 
 	public static void main(String[] args) throws ClassNotFoundException,

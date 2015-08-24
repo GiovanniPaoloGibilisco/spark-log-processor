@@ -100,7 +100,7 @@ plot(x,y1_sup)
 plot(x,y1_inf)
 xlabel('GB')
 ylabel('ms')
-legend('Linear Estimation','Location','northwest')
+legend('Duration','Linear Estimation','Location','northwest')
 
 %plot the error
 subplot(2,2,3) % third subplot
@@ -112,7 +112,7 @@ plot(x,y2_sup)
 plot(x,y2_inf)
 xlabel('GB')
 ylabel('ms')
-legend('Quadratic Estimation','Location','northwest')
+legend('Duration','Quadratic Estimation','Location','northwest')
 
 %plot the estimation
 subplot(2,2,4) % second subplot

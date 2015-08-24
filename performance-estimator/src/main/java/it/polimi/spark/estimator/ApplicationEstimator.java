@@ -55,11 +55,12 @@ public class ApplicationEstimator {
 
 	private static final int maxDegree = 3;
 	private static final int k = 5;
-	private static final int repetitions = 1000;
+	private static final int repetitions = 200;
 
 	Map<String, Long> durations = new HashMap<String, Long>();
 	Map<String, Double> sizes = new HashMap<String, Double>();
 	Map<Integer, Map<String, Long>> stageDurations = new HashMap<>();
+	Map<Integer, PolynomialFunction> stageModels = new HashMap<>();
 	Map<Integer, DirectedAcyclicGraph<Stagenode, DefaultEdge>> jobDags = new HashMap<Integer, DirectedAcyclicGraph<Stagenode, DefaultEdge>>();
 	List<String> trainSet = new ArrayList<>();
 	List<String> testSet = new ArrayList<>();
@@ -145,19 +146,17 @@ public class ApplicationEstimator {
 		appsBr.write("App ID,Real Duration,Estimated Duration,Error,Error Percentage,Size");
 		appsBr.write("\n");
 
-		// build stage models
-		Map<Integer, PolynomialFunction> stageModels = new HashMap<>();
-
 		// filter non executed stages
 		executedStages = filterExecutedStages();
 
+		// build the models
 		for (int stageID : executedStages) {
 			stageModels.put(stageID, buildStageModel(stageID));
 		}
 
 		// debugging, remove this later
 		testSet.addAll(trainSet);
-		//sort the tests in order of size for plotting convenience
+		// sort the tests in order of size for plotting convenience
 		Collections.sort(testSet, new Comparator<String>() {
 			@Override
 			public int compare(String o1, String o2) {
@@ -236,6 +235,38 @@ public class ApplicationEstimator {
 	}
 
 	/**
+	 * exports the estimation function to a file
+	 * 
+	 * @param path
+	 * @throws IOException
+	 */
+	public String getEstimationFunction() {
+
+		// Build the function used to merge stages results by looking at the DAG
+		// structure. This String uses stage ids as placeholders for the
+		// estimation function for wach stage
+		String function = "";
+		for (int jobId : jobDags.keySet()) {
+			String jobFunction = Utils.exportJobDurationFunction(jobDags
+					.get(jobId));
+			logger.info("Job ID:" + jobId + " function: " + jobFunction);
+			function += jobFunction + " + ";
+		}
+
+		function = function.substring(0, function.lastIndexOf("+"));
+		logger.info("Function: " + function);
+
+		for (int stageId : stageModels.keySet()) {
+			function = function.replaceAll("_" + stageId + "_", stageModels
+					.get(stageId).toString());
+		}
+
+		logger.info("Function: " + function);
+		return function;
+
+	}
+
+	/**
 	 * perform k-fold cross validation to build the model for the stage
 	 * 
 	 * @param stageID
@@ -243,12 +274,12 @@ public class ApplicationEstimator {
 	 */
 	private PolynomialFunction buildStageModel(int stageID) {
 
-		String log = "Stage"+stageID+",";
+		String log = "Stage" + stageID + ",";
 		List<String> appList = new ArrayList<String>(trainSet);
 		int testBucketSize = Math.floorDiv(appList.size(), k);
 		double[] testErrors = new double[maxDegree];
 		Arrays.fill(testErrors, 0.0);
-		
+
 		int[] selections = new int[maxDegree];
 		Arrays.fill(selections, 0);
 		for (int rep = 0; rep < repetitions; rep++) {
@@ -320,7 +351,7 @@ public class ApplicationEstimator {
 			double minError = Collections.min(testErrorList);
 			int bestDegree = testErrorList.indexOf(minError);
 			selections[bestDegree]++;
-			log += (bestDegree+1);
+			log += (bestDegree + 1);
 		}
 
 		cvLogger.trace(log);

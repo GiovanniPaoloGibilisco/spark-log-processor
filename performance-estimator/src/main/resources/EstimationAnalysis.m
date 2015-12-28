@@ -74,6 +74,7 @@ xlabel('GB')
 ylabel('%')
 legend('Relative Error','Location','northwest')
 print('Estimation','-dpdf')
+print('Estimation','-dpng')
 
 
 
@@ -126,5 +127,6 @@ xlabel('GB')
 ylabel('ms')
 legend('Duration','Estimate','Linear','Quadratic','Location','northwest')
 print('Comparison','-dpdf')
+print('Comparison','-dpng')
 
 end

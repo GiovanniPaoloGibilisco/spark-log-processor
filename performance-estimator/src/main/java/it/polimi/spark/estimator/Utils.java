@@ -2,17 +2,25 @@ package it.polimi.spark.estimator;
 
 import it.polimi.spark.dag.Stagenode;
 
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
+import java.io.Reader;
 import java.io.StreamCorruptedException;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVRecord;
 import org.jgraph.graph.DefaultEdge;
 import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
 import org.slf4j.Logger;
@@ -129,7 +137,7 @@ public class Utils {
 				break;
 			}
 		}
-		// TODO: concatenate properly
+		
 		return exportJobDurationFunction(dag, finalStage);
 	}
 
@@ -195,5 +203,79 @@ public class Utils {
 			return function;
 		}
 		return "_" + Integer.toString(finalStage.getId()) + "_";
+	}
+	
+	public static Map<Integer,Long> getStagesDuration(Path benchmarkfolder)
+			throws FileNotFoundException, IOException {
+		// load the duration of all stages
+		HashMap<Integer, Long> durations = new HashMap<>();
+		Path applicationStages = Paths.get(benchmarkfolder.toAbsolutePath()
+				.toString(), "StageDetails.csv");
+		Reader eventsReader;
+		Iterable<CSVRecord> eventsRecords;
+		eventsReader = new FileReader(applicationStages.toFile());
+		eventsRecords = CSVFormat.EXCEL.withHeader().parse(eventsReader);
+		for (CSVRecord record : eventsRecords) {
+			int stageID = Integer.decode(record.get("Stage ID"));
+			long duration = Long.decode(record.get("Duration"));
+			// skip non executed stages
+			if (duration == 0)
+				continue;
+			if (!durations.containsKey(stageID))
+				durations.put(stageID,duration);			
+		}
+		eventsReader.close();
+		return durations;
+	}
+
+	public static long getApplicationDuration(Path benchmarkfolder)
+			throws FileNotFoundException, IOException {
+		// load the duration of the application
+		Path applicationEvents = Paths.get(benchmarkfolder.toAbsolutePath()
+				.toString(), "application.csv");
+
+		Reader eventsReader = new FileReader(applicationEvents.toFile());
+		Iterable<CSVRecord> eventsRecords = CSVFormat.EXCEL.withHeader().parse(
+				eventsReader);
+		long start = 0;
+		long end = 0;
+		for (CSVRecord record : eventsRecords) {
+			String event = record.get("Event");
+			long timestamp = Long.decode(record.get("Timestamp"));
+			if (event.equals("SparkListenerApplicationStart")) {
+				start = timestamp;
+			} else if (event.equals("SparkListenerApplicationEnd")) {
+				end = timestamp;
+			}
+		}		
+		eventsReader.close();
+		return end - start;
+	}
+
+	public static double getApplicationSize(Path benchmarkfolder)
+			throws IOException {
+		// Load the size of the application and its id
+		Path infoFile = Paths.get(benchmarkfolder.toAbsolutePath().toString(),
+				"application.info");
+		return getSizeFromInfoFile(infoFile);		
+		
+	}
+
+	public static double getSizeFromInfoFile(Path infoFile) throws IOException {
+
+		for (String line : Files.readAllLines(infoFile,
+				Charset.defaultCharset()))
+			if (line.contains("Data Size"))
+				return Double.parseDouble(line.split(";")[1]);
+
+		return 0;
+	}
+
+	public static String getAppIDFromInfoFile(Path infoFile) throws IOException {
+		for (String line : Files.readAllLines(infoFile,
+				Charset.defaultCharset()))
+			if (line.contains("Application Id"))
+				return line.split(";")[1];
+		return null;
 	}
 }

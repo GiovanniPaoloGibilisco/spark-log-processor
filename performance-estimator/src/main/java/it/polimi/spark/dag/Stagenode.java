@@ -4,6 +4,10 @@ import java.io.Serializable;
 import java.util.List;
 
 public class Stagenode implements Serializable {
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 8942086554723639906L;
 	int jobId;
 	int id;
 	private List<Integer> parentIDs;

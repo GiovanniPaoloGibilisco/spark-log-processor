@@ -34,12 +34,12 @@ public class Config implements Serializable {
 		_instance = new Config();
 		commander = new JCommander(_instance, args);
 		logger.info(
-				"Configuration: --batchFolder {} --trainFraction{} --dagInputFolder {} --outputFolder {} --usage {} --stagePerformance {} --jobPerformance {} --exportToDatabase {} --dbUser {} --dbPassword {} --dbUrl {} --clusterName {} -- appId {}",
+				"Configuration: --batchFolder {} --trainFraction{} --dagInputFolder {} --outputFolder {} --usage {} --stagePerformance {} --jobPerformance {} --exportToDatabase {} --dbUser {} --dbPassword {} --dbUrl {} --clusterName {} -- appId {} --test {}",
 				new Object[] { _instance.benchmarkFolder, _instance.trainFraction, _instance.dagInputFolder, _instance.outputFile,
 						_instance.usage, _instance.stagePerformanceFile,
 						_instance.jobPerformanceFile, _instance.toDB,
 						_instance.dbUser, _instance.dbPassword,
-						_instance.dbUrl, _instance.clusterName, _instance.appId });
+						_instance.dbUrl, _instance.clusterName, _instance.appId, _instance.testType  });
 	}
 
 	@Parameter(names = { "-b", "--batchFolder" }, description = "Path to the input folder containing the benchmarks")
@@ -80,6 +80,10 @@ public class Config implements Serializable {
 
 	@Parameter(names = { "--appId" }, description = "the Id of the application (to be used as key in the database)")
 	public String appId = null;
+	
+
+	@Parameter(names = { "--test" }, description = "If performing a test run, the type of test (aggregation or estimation)")
+	public String testType= "none";	
 	
 	public boolean batch=false;
 	

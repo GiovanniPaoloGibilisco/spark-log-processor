@@ -3,14 +3,10 @@ package it.polimi.spark.estimator;
 import it.polimi.spark.dag.Stagenode;
 
 import java.io.BufferedWriter;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
-import java.io.Reader;
-import java.nio.charset.Charset;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,8 +23,6 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.math3.analysis.polynomials.PolynomialFunction;
@@ -53,7 +47,7 @@ public class ApplicationEstimator {
 	Config config = Config.getInstance();
 	Path inputFolder;
 
-	private static final int maxDegree = 3;
+	private static final int maxDegree = 2;
 	private static final int k = 5;
 	private static final int repetitions = 200;
 
@@ -81,7 +75,7 @@ public class ApplicationEstimator {
 	}
 
 	public List<EstimationResult> estimateDuration() throws IOException,
-			ClassNotFoundException {
+			ClassNotFoundException, SmallDataException {
 
 		List<EstimationResult> results = new ArrayList<EstimationResult>();
 
@@ -95,13 +89,22 @@ public class ApplicationEstimator {
 						+ benchmarkfolder.getFileName());
 				Path infoFile = Paths.get(benchmarkfolder.toAbsolutePath()
 						.toString(), "application.info");
-				String appId = getAppIDFromInfoFile(infoFile);
+				String appId = Utils.getAppIDFromInfoFile(infoFile);
 
-				getApplicationSize(benchmarkfolder, appId);
+				sizes.put(appId, Utils.getApplicationSize(benchmarkfolder));
 
-				getApplicationDuration(benchmarkfolder, appId);
+				durations.put(appId,
+						Utils.getApplicationDuration(benchmarkfolder));
 
-				getStagesDuration(benchmarkfolder, appId);
+				Map<Integer, Long> stages = Utils
+						.getStagesDuration(benchmarkfolder);
+
+				for (int stageId : stages.keySet()) {
+					if (!stageDurations.containsKey(stageId))
+						stageDurations
+								.put(stageId, new HashMap<String, Long>());
+					stageDurations.get(stageId).put(appId, stages.get(stageId));
+				}
 
 				getJobDags(benchmarkfolder);
 
@@ -134,7 +137,7 @@ public class ApplicationEstimator {
 		BufferedWriter stageBr = new BufferedWriter(new OutputStreamWriter(
 				stageOs, "UTF-8"));
 		// the schema first
-		stageBr.write("Stage ID,Real Duration,Estimated Duration,Error,Error Percentage,Size,Error/AppDuration");
+		stageBr.write("App ID, App Size,Stage ID,Real Duration,Estimated Duration,Error,Error Percentage,Size,Error/AppDuration");
 		stageBr.write("\n");
 
 		// stave the metrics of the estimation of the applications in a csv file
@@ -154,7 +157,8 @@ public class ApplicationEstimator {
 			stageModels.put(stageID, buildStageModel(stageID));
 		}
 
-		// debugging, remove this later
+		// debugging, used to generate error statistics on train set as well,
+		// might be removed
 		testSet.addAll(trainSet);
 		// sort the tests in order of size for plotting convenience
 		Collections.sort(testSet, new Comparator<String>() {
@@ -169,11 +173,14 @@ public class ApplicationEstimator {
 			logger.debug("Estimating stage durations for app " + appId
 					+ " size: " + appSize);
 			Map<Integer, Long> estimatedStageDurations = new HashMap<Integer, Long>();
+			Map<Integer, Long> realStageDurations = new HashMap<Integer, Long>();
+
 			for (int stageId : executedStages) {
 				long estimatedDuration = new Double(stageModels.get(stageId)
 						.value(appSize)).longValue();
 				long realDuration = stageDurations.get(stageId).get(appId);
 				estimatedStageDurations.put(stageId, estimatedDuration);
+				realStageDurations.put(stageId, realDuration);
 
 				logger.trace("Stage: " + stageId + " Estimated Duration: "
 						+ estimatedDuration + " Real Duration: " + realDuration
@@ -185,7 +192,11 @@ public class ApplicationEstimator {
 						+ Math.abs(estimatedDuration - realDuration)
 						/ durations.get(appId));
 
-				stageBr.write(stageId
+				stageBr.write(appId
+						+ ","
+						+ appSize
+						+ ","
+						+ stageId
 						+ ","
 						+ realDuration
 						+ ","
@@ -206,8 +217,11 @@ public class ApplicationEstimator {
 			for (int jobId : jobDags.keySet())
 				estimatedAppDuration += Utils.estimateJobDuration(
 						jobDags.get(jobId), estimatedStageDurations);
+
 			EstimationResult estimation = new EstimationResult(appId, appSize,
 					realDuration, estimatedAppDuration);
+
+			// TODO: add stage estimation results
 			results.add(estimation);
 
 			logger.info("App: " + estimation.getAppID() + " Size: "
@@ -271,8 +285,10 @@ public class ApplicationEstimator {
 	 * 
 	 * @param stageID
 	 * @return
+	 * @throws SmallDataException
 	 */
-	private PolynomialFunction buildStageModel(int stageID) {
+	private PolynomialFunction buildStageModel(int stageID)
+			throws SmallDataException {
 
 		String log = "Stage" + stageID + ",";
 		List<String> appList = new ArrayList<String>(trainSet);
@@ -363,12 +379,6 @@ public class ApplicationEstimator {
 		double minError = Collections.min(testErrorList);
 		int bestDegree = testErrorList.indexOf(minError);
 
-		String selectionString = "";
-		for (int n = 0; n < maxDegree; n++)
-			selectionString += selections[n] + " ";
-		logger.info("Stage: " + stageID + " Selections:" + selectionString
-				+ " Selected: " + (bestDegree + 1));
-
 		// Now that the degree for the stage is fixed we can re-train that
 		// model using also the cv set
 		List<Double> trainSizes = new ArrayList<Double>();
@@ -380,13 +390,23 @@ public class ApplicationEstimator {
 		PolynomialFunction bestModel = getStageEstimationFunction(trainSizes,
 				trainDurations, (bestDegree + 1));
 
+		String selectionString = "";
+		for (int n = 0; n < maxDegree; n++)
+			selectionString += selections[n] + " ";
+
+		logger.info("Stage: " + stageID + " Selections:" + selectionString
+				+ " Selected: " + (bestDegree + 1) + " model: "
+				+ bestModel.toString());
+
 		return bestModel;
 	}
 
 	private Set<Integer> filterExecutedStages() {
 		Set<Integer> stages = new HashSet<>();
 		// any app is fine for this
-		String appId = sizes.keySet().iterator().next();
+		String appId = stageDurations
+				.get(stageDurations.keySet().iterator().next()).keySet()
+				.iterator().next();
 		for (int stageID : stageDurations.keySet())
 			if (stageDurations.get(stageID).get(appId) > 0)
 				stages.add(stageID);
@@ -479,82 +499,12 @@ public class ApplicationEstimator {
 		}
 	}
 
-	private void getStagesDuration(Path benchmarkfolder, String appId)
-			throws FileNotFoundException, IOException {
-		// load the duration of all stages
-		Path applicationStages = Paths.get(benchmarkfolder.toAbsolutePath()
-				.toString(), "StageDetails.csv");
-		Reader eventsReader;
-		Iterable<CSVRecord> eventsRecords;
-		eventsReader = new FileReader(applicationStages.toFile());
-		eventsRecords = CSVFormat.EXCEL.withHeader().parse(eventsReader);
-		for (CSVRecord record : eventsRecords) {
-			int stageID = Integer.decode(record.get("Stage ID"));
-			long duration = Long.decode(record.get("Duration"));
-			// skip non executed stages
-			if (duration == 0)
-				continue;
-			if (!stageDurations.containsKey(stageID))
-				stageDurations.put(stageID, new HashMap<String, Long>());
-			stageDurations.get(stageID).put(appId, duration);
-		}
-		eventsReader.close();
-	}
-
-	private void getApplicationDuration(Path benchmarkfolder, String appId)
-			throws FileNotFoundException, IOException {
-		// load the duration of the application
-		Path applicationEvents = Paths.get(benchmarkfolder.toAbsolutePath()
-				.toString(), "application.csv");
-
-		Reader eventsReader = new FileReader(applicationEvents.toFile());
-		Iterable<CSVRecord> eventsRecords = CSVFormat.EXCEL.withHeader().parse(
-				eventsReader);
-		long start = 0;
-		long end = 0;
-		for (CSVRecord record : eventsRecords) {
-			String event = record.get("Event");
-			long timestamp = Long.decode(record.get("Timestamp"));
-			if (event.equals("SparkListenerApplicationStart")) {
-				start = timestamp;
-			} else if (event.equals("SparkListenerApplicationEnd")) {
-				end = timestamp;
-			}
-		}
-		durations.put(appId, end - start);
-		eventsReader.close();
-	}
-
-	private void getApplicationSize(Path benchmarkfolder, String appId)
-			throws IOException {
-		// Load the size of the application and its id
-		Path infoFile = Paths.get(benchmarkfolder.toAbsolutePath().toString(),
-				"application.info");
-		double size = getSizeFromInfoFile(infoFile);
-
-		sizes.put(appId, size);
-	}
-
-	private double getSizeFromInfoFile(Path infoFile) throws IOException {
-
-		for (String line : Files.readAllLines(infoFile,
-				Charset.defaultCharset()))
-			if (line.contains("Data Size"))
-				return Double.parseDouble(line.split(";")[1]);
-
-		return 0;
-	}
-
-	private String getAppIDFromInfoFile(Path infoFile) throws IOException {
-		for (String line : Files.readAllLines(infoFile,
-				Charset.defaultCharset()))
-			if (line.contains("Application Id"))
-				return line.split(";")[1];
-		return null;
-	}
-
 	public static PolynomialFunction getStageEstimationFunction(
-			List<Double> trainingSizes, List<Long> trainingDurations, int degree) {
+			List<Double> trainingSizes, List<Long> trainingDurations, int degree)
+			throws SmallDataException {
+
+		if (trainingSizes.size() <= degree)
+			throw new SmallDataException();
 
 		PolynomialCurveFitter fitter = PolynomialCurveFitter.create(degree);
 		List<WeightedObservedPoint> points = new ArrayList<>();

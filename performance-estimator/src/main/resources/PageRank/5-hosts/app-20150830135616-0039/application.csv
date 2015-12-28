@@ -1,0 +1,3 @@
+Event,App ID,Timestamp,
+SparkListenerApplicationStart,app-20150830135616-0039,1440960972966,
+SparkListenerApplicationEnd,null,1440965607658,

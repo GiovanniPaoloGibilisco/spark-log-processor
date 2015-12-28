@@ -11,8 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.csv.CSVFormat;
@@ -52,10 +54,11 @@ public class AggregationEstimator {
 		}
 	}
 
-	public void estimateDuration() throws ClassNotFoundException, IOException,
+	public  List<EstimationResult> estimateDuration() throws ClassNotFoundException, IOException,
 			SQLException {
 		// load the dags
 
+		ArrayList<EstimationResult> results = new ArrayList<>();
 		if (inputFolder.toFile().isFile()) {
 			logger.info("Input folder is actually a file, processing only that file");
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = Utils
@@ -91,8 +94,8 @@ public class AggregationEstimator {
 		// load stage performance info
 		Path stageInfoFile = Paths.get(config.stagePerformanceFile);
 		if (!stageInfoFile.toFile().exists()) {
-			logger.info("Stage info file" + stageInfoFile + " does not exist");
-			return;
+			logger.error("Stage info file" + stageInfoFile + " does not exist");
+			return results;
 		}
 		logger.info("loading Stage performance info from "
 				+ stageInfoFile.getFileName());
@@ -115,8 +118,8 @@ public class AggregationEstimator {
 		// Load job performance info
 		Path jobInfoFile = Paths.get(config.jobPerformanceFile);
 		if (!jobInfoFile.toFile().exists()) {
-			logger.info("Job Info File" + jobInfoFile + " does not exist");
-			return;
+			logger.error("Job Info File" + jobInfoFile + " does not exist");
+			return results;
 		}
 		logger.info("loading Job performance info from "
 				+ jobInfoFile.getFileName());
@@ -157,7 +160,7 @@ public class AggregationEstimator {
 
 		boolean output = true;
 		if (config.outputFile == null) {
-			logger.info("An output file has not been specified or can not be created.");
+			logger.warn("An output file has not been specified or can not be created.");
 			output = false;
 		}
 
@@ -186,9 +189,7 @@ public class AggregationEstimator {
 					dbHandler.updateJobExpectedExecutionTime(
 							config.clusterName, config.appId, jobId,
 							jobDurationEstimation.get(jobId));
-
-				// TODO: add stage estimation
-
+				
 			}
 		}
 
@@ -220,5 +221,8 @@ public class AggregationEstimator {
 		}
 		logger.info("Total Estimated Application execution time: "
 				+ applicationDurationEstimation + " ms.");
+		
+		results.add(new EstimationResult(null, -1, -1, applicationDurationEstimation));
+		return results;
 	}
 }

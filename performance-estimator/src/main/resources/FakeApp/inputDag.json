@@ -1,0 +1,26 @@
+{
+  "stages": [
+    {
+      "JobId": 0,
+      "StageId": 0,
+      "polyExp": 1,
+      "factors": [
+        100,
+        1000
+      ]
+    },
+    {
+      "JobId": 0,
+      "StageId": 1,
+      "parentStageIds": [
+        0
+      ],
+      "polyExp": 2,
+      "factors": [
+        1,
+        0.1,
+        1000
+      ]
+    }
+  ]
+}

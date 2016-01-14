@@ -28,7 +28,7 @@ public class DBHandler {
 			initConnection();
 			succesfulConnection = true;
 		} catch (Exception e) {
-			logger.error("Could not connect to DB, the application will not be added to the database");
+			logger.error("Could not connect to DB, the application will not be added to the database",e);
 			succesfulConnection = false;
 		}
 	}
@@ -44,7 +44,7 @@ public class DBHandler {
 
 	public void insertBenchmark(Benchmark application) throws SQLException {
 		if (!succesfulConnection) {
-			logger.warn("The initial connection to the database was not succesfull, application wil not be added");
+			logger.warn("The initial connection to the database was not succesfull, application will not be added");
 			return;
 		}
 

@@ -45,7 +45,7 @@ public class DBHandler {
 	public void updateApplicationExpectedExecutionTime(String clusterName,
 			String appID, double expectedTime) throws SQLException {
 
-		String query = "UPDATE Benchmark SET estimatedDuration='"
+		String query = "UPDATE benchmark SET estimatedDuration='"
 				+ expectedTime + "' WHERE appID='" + appID
 				+ "' AND clusterName='" + clusterName + "'";
 		logger.info("Sending Query: " + query);
@@ -61,7 +61,7 @@ public class DBHandler {
 	public void updateJobExpectedExecutionTime(String clusterName,
 			String appID, int jobId, double expectedTime) throws SQLException {
 
-		String query = "UPDATE Job SET estimatedDuration='" + expectedTime
+		String query = "UPDATE job SET estimatedDuration='" + expectedTime
 				+ "' WHERE appID='" + appID + "' AND clusterName='"
 				+ clusterName + "'" + " AND jobID='" + jobId + "'";
 		logger.info("Sending Query: " + query);
@@ -78,7 +78,7 @@ public class DBHandler {
 			String appID, int jobId, int stageId, double expectedTime)
 			throws SQLException {
 
-		String query = "UPDATE Stage SET estimatedDuration='" + expectedTime
+		String query = "UPDATE stage SET estimatedDuration='" + expectedTime
 				+ "' WHERE appID='" + appID + "' AND clusterName='"
 				+ clusterName + "'" + " AND jobID='" + jobId + "'"
 				+ " AND stageID='" + stageId + "'";

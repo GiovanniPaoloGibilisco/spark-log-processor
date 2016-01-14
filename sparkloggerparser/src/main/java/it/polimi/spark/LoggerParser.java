@@ -75,12 +75,10 @@ public class LoggerParser {
 	public static void main(String[] args) throws IOException,
 			URISyntaxException, ClassNotFoundException {
 
-		// the hadoop configuration
-		Configuration hadoopConf = new Configuration();
-		hdfs = FileSystem.get(hadoopConf);
-
 		// the spark configuration
 		SparkConf conf = new SparkConf().setAppName("logger-parser");
+		// the hadoop configuration
+		Configuration hadoopConf = new Configuration();
 		// the configuration of the application (as launched by the user)
 		Config.init(args);
 		config = Config.getInstance();
@@ -108,6 +106,10 @@ public class LoggerParser {
 			return;
 		}
 
+		@SuppressWarnings("resource")
+		JavaSparkContext sc = new JavaSparkContext(conf);
+		hdfs = FileSystem.get(hadoopConf);
+
 		// if the -a option has been specified, then get the default
 		// logging directory from sparkconf (property spark.eventLog.dir) and
 		// use it as base folder to look for the application log
@@ -129,9 +131,6 @@ public class LoggerParser {
 			logger.info("Input file " + config.inputFile + " does not exist");
 			return;
 		}
-
-		@SuppressWarnings("resource")
-		JavaSparkContext sc = new JavaSparkContext(conf);
 
 		sqlContext = new HiveContext(sc.sc());
 
@@ -188,9 +187,9 @@ public class LoggerParser {
 				dbHandler = new DBHandler(config.dbUrl, config.dbUser,
 						config.dbPassword);
 				logger.info("Retrieving Application Information");
-				application = retrieveApplicationConfiguration();
 			}
 		}
+		application = retrieveApplicationConfiguration();
 
 		// I could also remove the if, almost every functionality require to
 		// parse stage details
@@ -200,7 +199,7 @@ public class LoggerParser {
 			DataFrame applicationEvents = retrieveApplicationEvents();
 			saveListToCSV(applicationEvents, "application.csv");
 			// add the duration to the application
-			if (application != null && config.toDB)
+			if (application != null)
 				application.setDuration(getDuration(applicationEvents));
 
 			// collect stages from log files
@@ -222,7 +221,7 @@ public class LoggerParser {
 			initMaps(stageDetails, stageDetailsColumns, jobDetails,
 					jobDetailsColumns);
 
-			if (config.toDB && application != null) {
+			if (application != null) {
 				stages = extractStages(stageDetails, stageDetailsColumns,
 						application.getClusterName(), application.getAppID());
 				jobs = extractJobs(jobDetails, jobDetailsColumns,
@@ -273,7 +272,7 @@ public class LoggerParser {
 
 		// This part takes care of functionalities related to rdds
 		if (config.buildJobRDDGraph || config.buildStageRDDGraph) {
-			logger.info("Building Retrieving RDD information");
+			logger.info("Retrieving RDD information");
 			rddDetailsFrame = retrieveRDDInformation();
 			rddNodes = extractRDDs(rddDetailsFrame);
 			saveListToCSV(rddDetailsFrame, "rdd.csv");
@@ -347,6 +346,8 @@ public class LoggerParser {
 		}
 		if (dbHandler != null)
 			dbHandler.close();
+
+		logger.info("DONE!");
 	}
 
 	/**
@@ -359,7 +360,8 @@ public class LoggerParser {
 	 */
 	private static double getApplicationDataSize(List<Stage> stages,
 			int defaultParallelism) {
-		//if no default parallelism has been specified then try to avoid stages with a single executor at first
+		// if no default parallelism has been specified then try to avoid stages
+		// with a single executor at first
 		if (defaultParallelism == 0)
 			defaultParallelism = 2;
 		// sort the stages per id
@@ -376,7 +378,7 @@ public class LoggerParser {
 				return stage.getInputSize();
 		}
 
-		// if no such stage exist return the first stage 
+		// if no such stage exist return the first stage
 		return stages.get(0).getInputSize();
 
 	}
@@ -770,7 +772,8 @@ public class LoggerParser {
 	 */
 	private static void serializeDag(DirectedAcyclicGraph<?, DefaultEdge> dag,
 			String filename) throws IOException {
-
+		// to debug locally on windows
+		
 		OutputStream os = hdfs.create(new Path(new Path(config.outputFolder,
 				"dags"), filename));
 		ObjectOutputStream objectStream = new ObjectOutputStream(os);
@@ -948,6 +951,9 @@ public class LoggerParser {
 	private static void printRDDGraph(
 			DirectedAcyclicGraph<RDDnode, DefaultEdge> dag, int jobNumber,
 			int stageNumber) throws IOException {
+//		// to debug locally on windows
+//		if (true)
+//			return;
 
 		DOTExporter<RDDnode, DefaultEdge> exporter = new DOTExporter<RDDnode, DefaultEdge>(
 				new VertexNameProvider<RDDnode>() {
@@ -1098,6 +1104,7 @@ public class LoggerParser {
 	private static void printStageGraph(
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag, int jobNumber)
 			throws IOException {
+		
 
 		DOTExporter<Stagenode, DefaultEdge> exporter = new DOTExporter<Stagenode, DefaultEdge>(
 				new VertexNameProvider<Stagenode>() {
@@ -1227,10 +1234,23 @@ public class LoggerParser {
 			UnsupportedEncodingException {
 		// register two tables, one for the task start event and the other for
 		// the task end event
+		
 		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%TaskStart'")
 				.registerTempTable("taskStartInfos");
 		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%TaskEnd'")
 				.registerTempTable("taskEndInfos");
+		
+		sqlContext.sql("SELECT `Task Info` FROM taskStartInfos").printSchema();
+		sqlContext.sql("SELECT `Task Info` FROM taskStartInfos").show(10);
+		
+		sqlContext.sql("SELECT * FROM taskStartInfos").printSchema();
+		sqlContext.sql("SELECT * FROM taskStartInfos").show(10);
+		
+		sqlContext.sql(
+				"SELECT `Task Info` FROM events WHERE Event LIKE '%TaskEnd'")
+				.registerTempTable("taskInfosTmp");
+		sqlContext.sql("SELECT * FROM taskInfosTmp");
+		sqlContext.sql("SELECT `Task Info.Task ID` FROM taskInfosTmp").show(10);
 
 		// query the two tables for the task details
 		DataFrame taskDetails = sqlContext
@@ -1265,6 +1285,9 @@ public class LoggerParser {
 						+ "		FROM taskStartInfos AS start"
 						+ "		JOIN taskEndInfos AS finish"
 						+ "		ON `start.Task Info.Task ID`=`finish.Task Info.Task ID`");
+
+		taskDetails.show(100);
+
 		return taskDetails;
 	}
 
@@ -1282,6 +1305,7 @@ public class LoggerParser {
 	 */
 	private static void saveListToCSV(DataFrame data, String fileName)
 			throws IOException, UnsupportedEncodingException {
+
 		List<Row> table = data.toJavaRDD().collect();
 		OutputStream os = hdfs.create(new Path(config.outputFolder, fileName));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,
@@ -1325,6 +1349,8 @@ public class LoggerParser {
 
 	private static void saveApplicationInfo(String clusterName, String appId,
 			String appName, String dbUser, double dataSize) throws IOException {
+		// to debug locally on windows
+
 		OutputStream os = hdfs.create(new Path(config.outputFolder,
 				"application.info"));
 		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os,

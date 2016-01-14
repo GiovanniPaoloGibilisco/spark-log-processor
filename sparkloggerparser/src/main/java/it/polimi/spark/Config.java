@@ -44,7 +44,7 @@ public class Config implements Serializable {
 						_instance.buildStageRDDGraph,
 						_instance.buildJobRDDGraph, _instance.task,
 						_instance.usage, _instance.export, _instance.toDB,
-						_instance.dbUser, _instance.dbPassword, _instance.dbUrl });
+						_instance.dbUser, _instance.dbPassword, _instance.dbUrl});
 	}
 
 	@Parameter(names = { "-i", "--inputFile" }, description = "Path to the input file containing the logs, the file must can be in the local file system or on hdfs. Either -i or -app has to be specified")
@@ -56,7 +56,7 @@ public class Config implements Serializable {
 	@Parameter(names = { "-l", "--runLocal" }, description = "Use to run the tool in the local mode")
 	public boolean runLocal = false;
 
-	@Parameter(names = { "-app", "--appID" }, description = "Id of the application to analyze. If this parameter is specified (istead of using -i) the tool will look for log files using the configuration of the cluster")
+	@Parameter(names = { "-app", "--appID" }, description = "Id of the application to analyze. If this parameter is specified (instead of using -i) the tool will look for log files using the configuration of the cluster")
 	public String applicationID;
 
 	@Parameter(names = { "-a", "--applicationDAG" }, description = "build a single DAG with all the stages created by the application")
@@ -97,6 +97,7 @@ public class Config implements Serializable {
 
 	@Parameter(names = { "--dbUrl" }, description = "Url of the Database to which export the results")
 	public String dbUrl= "jdbc:mysql://minli39.sl.cloud9.ibm.com/SparkBench";	
+	
 
 	public void usage() {
 		StringBuilder builder = new StringBuilder();

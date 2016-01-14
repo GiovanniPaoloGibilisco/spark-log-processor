@@ -93,7 +93,7 @@ public class DBHandler {
 	private void insertIntoBenchmarkTable(Benchmark application)
 			throws SQLException {
 
-		String insertQuery = " insert into Benchmark (";
+		String insertQuery = " insert into benchmark (";
 		String values = " values (";
 
 		insertQuery += "clusterName,";
@@ -184,7 +184,7 @@ public class DBHandler {
 	}
 
 	private void insertIntoJobTable(Job job) throws SQLException {
-		String insertQuery = " insert into Job (";
+		String insertQuery = " insert into job (";
 		String values = " values (";
 
 		insertQuery += "clusterName,";
@@ -215,7 +215,7 @@ public class DBHandler {
 	}
 
 	private void insertIntoStageTable(Stage stage) throws SQLException {
-		String insertQuery = " insert into Stage (";
+		String insertQuery = " insert into stage (";
 		String values = " values (";
 
 		insertQuery += "clusterName,";
@@ -269,7 +269,7 @@ public class DBHandler {
 	}
 
 	private void insertIntoRDDTable(RDD rdd) throws SQLException {
-		String insertQuery = " insert into Rdd (";
+		String insertQuery = " insert into rdd (";
 		String values = " values (";
 
 		insertQuery += "rddID,";

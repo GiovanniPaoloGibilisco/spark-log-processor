@@ -108,7 +108,7 @@ public class Utils {
 	 * @param stageDuration
 	 * @return
 	 */
-	static long estimateJobDuration(
+	public static long estimateJobDuration(
 			DirectedAcyclicGraph<Stagenode, DefaultEdge> dag,
 			Map<Integer, Long> stageDuration) {
 		Stagenode finalStage = null;

@@ -1,6 +1,7 @@
 package it.polimi.spark.estimator.datagen;
 
 import it.polimi.spark.dag.Stagenode;
+import it.polimi.spark.estimator.Utils;
 
 import java.io.BufferedWriter;
 import java.io.FileInputStream;
@@ -32,19 +33,20 @@ public class ApplicationGenerator {
 	// Configurations
 
 	static final String baseFolder = "src/main/resources/FakeApp";
+	static final String dagFile = "parallelDag.json";
 	static final Logger logger = LoggerFactory
 			.getLogger(ApplicationGenerator.class);
-	static final int applicationsNumber = 20;
+	static final int applicationsNumber = 40;
 	static final double minData = 1;
-	static final double maxData = 200;
-	static final double noisePercentage = 0.1;
+	static final double maxData = 1000;
+	static final double noisePercentage = 0.05;
 	static final String appName = "FakeApp";
 	static Map<Double, Map<Integer, Long>> stageDurations;
 
 	public static void main(String[] args) throws IOException {
 
 		DagGenerator dagGenerator = new DagGenerator(Paths.get(baseFolder,
-				"inputDag.json").toString());
+				dagFile).toString());
 
 		DirectedAcyclicGraph<Stagenode, DefaultEdge> dag = dagGenerator
 				.buildDag();
@@ -52,7 +54,7 @@ public class ApplicationGenerator {
 		Set<Stagenode> stages = dag.vertexSet();
 
 		Map<Integer, PolynomialFunction> stageGrowthMap = loadStageDurationFunctions(Paths
-				.get(baseFolder, "inputDag.json").toString());
+				.get(baseFolder, dagFile).toString());
 
 		initStageGrowthDurations(stageGrowthMap, noisePercentage);
 
@@ -108,8 +110,9 @@ public class ApplicationGenerator {
 				double noisePercentage = random.nextGaussian() * randomFactor;
 				long duration = (long) (baseDuration + baseDuration * noisePercentage);
 				stageDurations.get(dataSize).put(stageId, (long) duration);
-				logger.info("Clean Duration: "+baseDuration+" Noisy duration: "+duration);
+				logger.info("Stage: "+stageId+" Clean Duration: "+baseDuration+" Noisy duration: "+duration);
 			}
+			
 
 		}
 	}
@@ -134,9 +137,8 @@ public class ApplicationGenerator {
 
 		// TODO: this is just a sum, we could use the dag and perfrom the same
 		// aggregtion we use in the estimation.
-		long duration = 0;
-		for (Stagenode stage : dag.vertexSet())
-			duration += getStageDuration(dataSize, stage.getId());
+		long duration = Utils.estimateJobDuration(
+				dag, stageDurations.get(dataSize));
 
 		return duration;
 	}

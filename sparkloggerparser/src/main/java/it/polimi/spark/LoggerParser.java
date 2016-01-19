@@ -1199,8 +1199,26 @@ public class LoggerParser {
 						+ "	WHERE `ExecutedStages.Stage ID` IS  NULL")
 				.registerTempTable("NonExecutedStages");
 
-		return sqlContext.sql("SELECT * " + "	FROM ExecutedStages"
-				+ "	UNION ALL" + "	SELECT *" + "	FROM NonExecutedStages");
+		sqlContext.sql("SELECT * " + "	FROM ExecutedStages"
+				+ "	UNION ALL" + "	SELECT *" + "	FROM NonExecutedStages").registerTempTable("Stages");
+				
+		//TODO: Build the stage duration table
+		sqlContext.sql("SELECT stageID as `Stage ID`,"
+				+ "MAX(finishTime)-MIN(startTime) as Duration"
+				+ "FROM Tasks GROUP BY stageID").registerTempTable("StageDurations");
+		
+		sqlContext.sql("SELECT * " + "	FROM StageDurations").show(100);
+		
+		return sqlContext
+		.sql("SELECT `Stages.Stage ID`,"
+				+ "`Stage Name`,"
+				+ "`Parent IDs`,"
+				+ "`Number of Tasks`,"
+				+ "`Submission Time`,"
+				+ "`Completion Time`,"
+				+ "`StageDurations.Duration` as Duration," 
+				+ "Executed"
+				+ " FROM Stages JOIN StageDurations ON `Stages.Stage ID`=`StageDurations.StageID`");
 
 	}
 
@@ -1285,8 +1303,8 @@ public class LoggerParser {
 						+ "		FROM taskStartInfos AS start"
 						+ "		JOIN taskEndInfos AS finish"
 						+ "		ON `start.Task Info.Task ID`=`finish.Task Info.Task ID`");
-
-		taskDetails.show(100);
+		
+		taskDetails.registerTempTable("Tasks");
 
 		return taskDetails;
 	}

@@ -54,8 +54,8 @@ public class AggregationEstimator {
 		}
 	}
 
-	public  List<EstimationResult> estimateDuration() throws ClassNotFoundException, IOException,
-			SQLException {
+	public List<EstimationResult> estimateDuration()
+			throws ClassNotFoundException, IOException, SQLException {
 		// load the dags
 
 		ArrayList<EstimationResult> results = new ArrayList<>();
@@ -181,15 +181,16 @@ public class AggregationEstimator {
 						config.dbPassword);
 				logger.info("Saving results to the DB");
 
-				dbHandler.updateApplicationExpectedExecutionTime(
-						config.clusterName, config.appId,
-						(double) applicationDurationEstimation);
+				if (dbHandler != null) {
+					dbHandler.updateApplicationExpectedExecutionTime(
+							config.clusterName, config.appId,
+							(double) applicationDurationEstimation);
 
-				for (int jobId : jobDurationEstimation.keySet())
-					dbHandler.updateJobExpectedExecutionTime(
-							config.clusterName, config.appId, jobId,
-							jobDurationEstimation.get(jobId));
-				
+					for (int jobId : jobDurationEstimation.keySet())
+						dbHandler.updateJobExpectedExecutionTime(
+								config.clusterName, config.appId, jobId,
+								jobDurationEstimation.get(jobId));
+				}
 			}
 		}
 
@@ -221,8 +222,9 @@ public class AggregationEstimator {
 		}
 		logger.info("Total Estimated Application execution time: "
 				+ applicationDurationEstimation + " ms.");
-		
-		results.add(new EstimationResult(null, -1, -1, applicationDurationEstimation));
+
+		results.add(new EstimationResult(null, -1, -1,
+				applicationDurationEstimation));
 		return results;
 	}
 }

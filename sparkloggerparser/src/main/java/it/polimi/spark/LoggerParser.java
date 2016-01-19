@@ -275,8 +275,7 @@ public class LoggerParser {
 			logger.info("Retrieving RDD information");
 			rddDetailsFrame = retrieveRDDInformation();
 			rddNodes = extractRDDs(rddDetailsFrame);
-			saveListToCSV(rddDetailsFrame, "rdd.csv");
-			rddDetailsFrame.show();
+			saveListToCSV(rddDetailsFrame, "rdd.csv");		
 			rddDetails = rddDetailsFrame.collectAsList();
 			rddDetailsColumns = new ArrayList<String>(
 					Arrays.asList(rddDetailsFrame.columns()));
@@ -1207,7 +1206,6 @@ public class LoggerParser {
 				+ "MAX(finishTime)-MIN(startTime) as Duration "
 				+ "FROM Tasks GROUP BY stageID").registerTempTable("StageDurations");
 		
-		sqlContext.sql("SELECT * " + "	FROM StageDurations").show(100);
 		
 		return sqlContext
 		.sql("SELECT `Stages.Stage ID`,"
@@ -1258,17 +1256,12 @@ public class LoggerParser {
 		sqlContext.sql("SELECT * FROM events WHERE Event LIKE '%TaskEnd'")
 				.registerTempTable("taskEndInfos");
 		
-		sqlContext.sql("SELECT `Task Info` FROM taskStartInfos").printSchema();
-		sqlContext.sql("SELECT `Task Info` FROM taskStartInfos").show(10);
-		
-		sqlContext.sql("SELECT * FROM taskStartInfos").printSchema();
-		sqlContext.sql("SELECT * FROM taskStartInfos").show(10);
 		
 		sqlContext.sql(
 				"SELECT `Task Info` FROM events WHERE Event LIKE '%TaskEnd'")
 				.registerTempTable("taskInfosTmp");
 		sqlContext.sql("SELECT * FROM taskInfosTmp");
-		sqlContext.sql("SELECT `Task Info.Task ID` FROM taskInfosTmp").show(10);
+		
 
 		// query the two tables for the task details
 		DataFrame taskDetails = sqlContext

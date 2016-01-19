@@ -613,7 +613,7 @@ public class LoggerParser {
 						.indexOf("Stage ID"));
 				Stage stage = new Stage(clusterName, applicationID,
 						stage2jobMap.get(stageId), stageId);
-				stage.setDuration(Integer.parseInt(row.getString(stageColumns
+				stage.setDuration(Long.parseLong(row.getString(stageColumns
 						.indexOf("Duration"))));
 				stage.setNumberOfTaks((int) row.getLong(stageColumns
 						.indexOf("Number of Tasks")));

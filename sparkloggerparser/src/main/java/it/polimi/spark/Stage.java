@@ -8,7 +8,7 @@ public class Stage {
 	private String appID;
 	private String appName;
 	private String clusterName;
-	private int duration;
+	private long duration;
 	private double inputSize;
 	private int jobID;
 	private double outputSize;
@@ -52,7 +52,7 @@ public class Stage {
 		return clusterName;
 	}
 
-	public int getDuration() {
+	public long getDuration() {
 		return duration;
 	}
 
@@ -84,7 +84,7 @@ public class Stage {
 		this.appName = appName;
 	}
 
-	public void setDuration(int duration) {
+	public void setDuration(long duration) {
 		this.duration = duration;
 	}
 

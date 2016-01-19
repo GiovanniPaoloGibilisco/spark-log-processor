@@ -602,7 +602,7 @@ public class LoggerParser {
 	 */
 	private static List<Stage> extractStages(List<Row> stageDetails,
 			List<String> stageColumns, String clusterName, String applicationID) {
-
+		
 		List<Stage> stages = new ArrayList<Stage>();
 		for (Row row : stageDetails) {
 			// filter outnon executed stages
@@ -612,8 +612,8 @@ public class LoggerParser {
 						.indexOf("Stage ID"));
 				Stage stage = new Stage(clusterName, applicationID,
 						stage2jobMap.get(stageId), stageId);
-				stage.setDuration(Long.parseLong(row.getString(stageColumns
-						.indexOf("Duration"))));
+				stage.setDuration(row.getLong(stageColumns
+						.indexOf("Duration")));
 				stage.setNumberOfTaks((int) row.getLong(stageColumns
 						.indexOf("Number of Tasks")));
 				stages.add(stage);

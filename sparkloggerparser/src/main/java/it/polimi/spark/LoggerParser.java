@@ -1204,7 +1204,7 @@ public class LoggerParser {
 				
 		//TODO: Build the stage duration table
 		sqlContext.sql("SELECT stageID as `Stage ID`,"
-				+ "MAX(finishTime)-MIN(startTime) as Duration"
+				+ "MAX(finishTime)-MIN(startTime) as Duration "
 				+ "FROM Tasks GROUP BY stageID").registerTempTable("StageDurations");
 		
 		sqlContext.sql("SELECT * " + "	FROM StageDurations").show(100);

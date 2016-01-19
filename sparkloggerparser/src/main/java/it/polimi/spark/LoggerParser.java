@@ -1218,7 +1218,7 @@ public class LoggerParser {
 				+ "`Completion Time`,"
 				+ "`StageDurations.Duration` as Duration," 
 				+ "Executed"
-				+ " FROM Stages JOIN StageDurations ON `Stages.Stage ID`=`StageDurations.StageID`");
+				+ " FROM Stages JOIN StageDurations ON `Stages.Stage ID`=`StageDurations.Stage ID`");
 
 	}
 
